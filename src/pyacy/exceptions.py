@@ -12,6 +12,7 @@
     ├── PYaCyResponseError   (API 返回错误)
     │   ├── PYaCyAuthError   (认证失败)
     │   └── PYaCyServerError (服务端内部错误)
+    ├── PYaCyP2PError        (P2P 协议错误)
     └── PYaCyValidationError (参数校验失败)
 """
 
@@ -118,3 +119,24 @@ class PYaCyValidationError(PYaCyError):
     则抛出此异常，避免无效请求发送到服务端。
     """
     pass
+
+
+class PYaCyP2PError(PYaCyError):
+    """P2P 协议层错误时抛出。
+
+    当 P2P 通信（Hello、DHT 搜索、RWI 传输等）遇到问题时抛出。
+    可能包含 HTTP 状态码信息。
+
+    Attributes:
+        status_code: HTTP 状态码（如果可用）。
+    """
+
+    def __init__(self, message: str, status_code: int | None = None):
+        """初始化 P2P 异常。
+
+        Args:
+            message: 错误描述信息。
+            status_code: HTTP 状态码（可选）。
+        """
+        super().__init__(message)
+        self.status_code = status_code

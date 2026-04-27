@@ -2,32 +2,34 @@
 """PYaCy 测试配置与共享夹具。
 
 本模块提供 pytest 测试用例的共享配置，包括：
-    - 模拟 YaCy 服务器的 HTTP mock fixtures
-    - 客户端实例的 fixture
-    - 测试数据的常量定义
+- 模拟 YaCy 服务器的 HTTP mock fixtures
+- 客户端实例的 fixture
+- 测试数据的常量定义
 """
-
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 
-from pyacy import YaCyClient
+# 确保 src 目录在 Python 路径中
+_SRC_DIR = str(Path(__file__).parent.parent / "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
 # ---------------------------------------------------------------------------
 # 常量：测试用 URL
 # ---------------------------------------------------------------------------
-
 TEST_BASE_URL = "http://localhost:8090"
-
 
 # ---------------------------------------------------------------------------
 # 模拟响应数据
 # ---------------------------------------------------------------------------
+
 
 def make_mock_search_response(
     query: str = "test",
@@ -77,16 +79,15 @@ def make_mock_search_response(
                 "startIndex": 0,
                 "itemsPerPage": 10,
                 "items": items,
-                "topwords": [
-                    {"word": "python"},
-                    {"word": "javascript"},
-                ],
+                "topwords": [{"word": "python"}, {"word": "javascript"}],
             }
         ],
     }
 
 
-def make_mock_suggest_response(queries: list[str] | None = None) -> list[dict[str, str]]:
+def make_mock_suggest_response(
+    queries: list[str] | None = None,
+) -> list[dict[str, str]]:
     """构建模拟的搜索建议响应。
 
     Args:
@@ -162,21 +163,16 @@ def make_mock_push_response(success: bool = True) -> dict[str, Any]:
 
 
 @pytest.fixture
-def client() -> YaCyClient:
-    """提供一个不需要实际网络连接的 YaCyClient 实例。
-
-    用于需要覆盖内部方法的测试。
-    """
+def client():
+    """提供一个模拟的客户端实例（不实际连接）。"""
+    from pyacy import YaCyClient
     return YaCyClient(base_url=TEST_BASE_URL)
 
 
 @pytest.fixture
 def mock_session() -> MagicMock:
-    """提供一个模拟的 requests.Session。
-
-    可以设置 return_value 来控制 HTTP 响应。
-    """
-    return MagicMock(spec=requests.Session)
+    """提供一个模拟的 requests.Session。"""
+    return MagicMock()
 
 
 def mock_response(
@@ -196,7 +192,7 @@ def mock_response(
     Returns:
         模拟的 Response 对象。
     """
-    response = MagicMock(spec=requests.Response)
+    response = MagicMock()
     response.status_code = status_code
     response.text = text
     response.content = content
