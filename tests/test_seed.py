@@ -76,19 +76,19 @@ class TestSeedCreation:
     def test_from_json(self) -> None:
         """从 JSON 字典创建。"""
         data = {
-            "hash": "testhash123",
-            "name": "JSONPeer",
-            "type": "senior",
-            "ip": "10.0.0.1",
-            "port": 8090,
-            "version": "1.92",
-            "lastseen": "2026/01/01 12:00:00",
-            "uptime": "1440",
-            "links": "50000",
-            "words": "100000",
-            "urls": "2000",
-            "seeds": "150",
-            "connects": "30",
+            "Hash": "testhash123",
+            "Name": "JSONPeer",
+            "PeerType": "senior",
+            "IP": "10.0.0.1",
+            "Port": 8090,
+            "Version": "1.92",
+            "LastSeen": "2026/01/01 12:00:00",
+            "Uptime": "1440",
+            "LCount": "50000",
+            "ICount": "100000",
+            "RCount": "2000",
+            "SCount": "150",
+            "CCount": "30",
         }
         seed = Seed.from_json(data)
         assert seed.hash == "testhash123"
@@ -98,7 +98,7 @@ class TestSeedCreation:
 
     def test_from_json_minimal(self) -> None:
         """从最小 JSON 创建。"""
-        seed = Seed.from_json({"hash": "minimalhash"})
+        seed = Seed.from_json({"Hash": "minimalhash"})
         assert seed.hash == "minimalhash"
         assert seed.peer_type == PEERTYPE_JUNIOR
 
@@ -307,9 +307,9 @@ class TestSeedComparison:
         assert s1 != s2
 
     def test_hashable(self) -> None:
-        """Seed 应可在 set/dict 中使用。"""
-        s1 = Seed.create_junior("node1")
-        s2 = Seed.create_junior("node1")
+        """Seed 应可在 set/dict 中使用（相同哈希可去重）。"""
+        s1 = Seed({"Hash": "AAA", "Name": "node1"})
+        s2 = Seed({"Hash": "AAA", "Name": "node1_clone"})
         seeds = {s1, s2}
         assert len(seeds) == 1  # 相同哈希去重
 

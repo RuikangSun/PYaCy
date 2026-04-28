@@ -160,7 +160,7 @@ class Seed:
             SeedKeys.PORT: str(port),
             SeedKeys.IP: "",
             SeedKeys.IP6: "",
-            SeedKeys.VERSION: "0.2.1",
+            SeedKeys.VERSION: "0.2.2",
             SeedKeys.FLAGS: "    ",
             SeedKeys.ISPEED: "0",
             SeedKeys.RSPEED: "0",
@@ -213,6 +213,14 @@ class Seed:
     def from_json(data: dict[str, Any]) -> "Seed":
         """从 JSON 字典创建 Seed（用于 seedlist.json 端点）。
 
+        YaCy 的 seedlist.json 端点直接返回种子 DNA 字段，
+        键名与 SeedKeys 常量一致（如 "Hash"、"PeerType"、"IP" 等），
+        因此可以直接复用到 dna 字典中。
+
+        特殊处理:
+            - "Address" 字段是数组（如 ``["ip:port"]``），用于补充 IP。
+            - 某些旧版 YaCy 可能返回小写键名，这里也兼容处理。
+
         Args:
             data: seedlist.json 中的种子条目。
 
@@ -221,34 +229,33 @@ class Seed:
         """
         dna: dict[str, str] = {}
 
-        # seedlist.json 字段映射
-        field_map = {
-            "hash": SeedKeys.HASH,
-            "name": SeedKeys.NAME,
-            "type": SeedKeys.PEERTYPE,
-            "version": SeedKeys.VERSION,
-            "ip": SeedKeys.IP,
-            "port": SeedKeys.PORT,
-            "lastseen": SeedKeys.LASTSEEN,
-            "uptime": SeedKeys.UPTIME,
-            "links": SeedKeys.LCOUNT,
-            "words": SeedKeys.ICOUNT,
-            "urls": SeedKeys.RCOUNT,
-            "seeds": SeedKeys.SCOUNT,
-            "connects": SeedKeys.CCOUNT,
-            "sendWords": SeedKeys.INDEX_OUT,
-            "receivedWords": SeedKeys.INDEX_IN,
-            "sendURLs": SeedKeys.URL_OUT,
-            "receivedURLs": SeedKeys.URL_IN,
-        }
+        # 直接复用 YaCy 原生的 DNA 键名到 dna 字典
+        for key, value in data.items():
+            if key == "Address":
+                # Address 是 ["ip:port", ...] 数组。
+                # 仅当 JSON 中未提供 IP 字段时，才从 Address 中提取。
+                if SeedKeys.IP not in dna and isinstance(value, list) and value:
+                    addr = str(value[0])
+                    # 处理 IPv6 地址（如 "[::1]:8090"）
+                    if addr.startswith("[") and "]" in addr:
+                        ip = addr[1:addr.index("]")]
+                    elif ":" in addr:
+                        # IPv4 或纯 IPv6（无括号）
+                        ip = addr.rsplit(":", 1)[0]
+                    else:
+                        ip = addr
+                    if ip:
+                        dna[SeedKeys.IP] = ip
+                continue
+            if key in ("news",):
+                continue  # 跳过无意义字段
+            if value is not None:
+                dna[key] = str(value)
 
-        for json_key, dna_key in field_map.items():
-            val = data.get(json_key)
-            if val is not None:
-                dna[dna_key] = str(val)
-
+        # 确保必要字段存在
         dna.setdefault(SeedKeys.PEERTYPE, PEERTYPE_JUNIOR)
-        dna.setdefault(SeedKeys.NAME, data.get("fullname", "unknown"))
+        dna.setdefault(SeedKeys.NAME, data.get("Name", data.get("name", "unknown")))
+        dna.setdefault(SeedKeys.PORT, "8090")
 
         return Seed(dna)
 
@@ -357,6 +364,7 @@ class Seed:
         """节点的 HTTP 基础 URL。
 
         仅当节点有有效 IP 和端口时返回。
+        自动处理 IPv6 地址（添加方括号）。
 
         Returns:
             ``http://ip:port`` 格式的 URL，或 None。
@@ -364,6 +372,9 @@ class Seed:
         ip_val = self.ip
         if not ip_val or self.port == 0:
             return None
+        # IPv6 地址需要用方括号包裹
+        if ":" in ip_val and not ip_val.startswith("["):
+            ip_val = f"[{ip_val}]"
         return f"http://{ip_val}:{self.port}"
 
     @property

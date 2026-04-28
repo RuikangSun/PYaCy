@@ -148,7 +148,7 @@ class YaCyClient:
         # 默认请求头
         self.session.headers.update(
             {
-                "User-Agent": "PYaCy/0.2.1 (Python YaCy Client)",
+                "User-Agent": "PYaCy/0.2.2 (Python YaCy Client)",
                 "Accept": "application/json, text/xml, */*",
             }
         )

@@ -247,6 +247,9 @@ class HelloClient:
         """从远程节点获取种子列表（Bootstrap）。
 
         使用 /yacy/seedlist.json 端点获取已知节点列表。
+        支持两种响应格式：
+        - ``{"peers": [{...}, ...]}``（标准 JSON 格式）
+        - ``[{...}, ...]``（扁平数组格式，旧版）
 
         Args:
             target_url: 目标节点 URL。
@@ -260,7 +263,21 @@ class HelloClient:
             _logger.warning("获取 seedlist 失败: %s", exc)
             return []
 
-        # seedlist.json 返回的是列表
+        # seedlist.json 标准格式: {"peers": [{...}, ...]}
+        if isinstance(data, dict) and "peers" in data:
+            peer_list = data["peers"]
+            if isinstance(peer_list, list):
+                seeds: list[Seed] = []
+                for item in peer_list:
+                    try:
+                        seed = Seed.from_json(item)
+                        seeds.append(seed)
+                    except Exception as exc:
+                        _logger.debug("解析种子条目失败: %s", exc)
+                _logger.debug("seedlist.json: 解析 %d/%d 个节点", len(seeds), len(peer_list))
+                return seeds
+
+        # 扁平数组格式: [{...}, ...]
         if isinstance(data, list):
             seeds: list[Seed] = []
             for item in data:
@@ -271,7 +288,7 @@ class HelloClient:
                     _logger.debug("解析种子条目失败: %s", exc)
             return seeds
 
-        # HTML 格式的 seedlist
+        # HTML 格式的 seedlist（回退）
         if isinstance(data, P2PResponse):
             seedlist_str = data.get("seedlist", "")
             if seedlist_str:

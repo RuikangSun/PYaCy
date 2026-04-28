@@ -47,6 +47,9 @@ benchmark/
 # Jupyter
 .ipynb_checkpoints/
 
+# Development reports (人机对话报告)
+reports/
+
 # OS
 Thumbs.db
 Desktop.ini
