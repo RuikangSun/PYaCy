@@ -40,16 +40,24 @@ from pyacy.models import (
     PushResponse,
 )
 
-from conftest import (
-    TEST_BASE_URL,
-    make_mock_search_response,
-    make_mock_suggest_response,
-    make_mock_status_response,
-    make_mock_version_response,
-    make_mock_network_response,
-    make_mock_push_response,
-    mock_response,
-)
+import sys
+from pathlib import Path
+
+# 将 tests 目录加入 sys.path 以便导入 conftest
+_tests_dir = str(Path(__file__).parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
+
+import conftest as _cf
+
+TEST_BASE_URL = _cf.TEST_BASE_URL
+make_mock_search_response = _cf.make_mock_search_response
+make_mock_suggest_response = _cf.make_mock_suggest_response
+make_mock_status_response = _cf.make_mock_status_response
+make_mock_version_response = _cf.make_mock_version_response
+make_mock_network_response = _cf.make_mock_network_response
+make_mock_push_response = _cf.make_mock_push_response
+mock_response = _cf.mock_response
 
 
 # ======================================================================

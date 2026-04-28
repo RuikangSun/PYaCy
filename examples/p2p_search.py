@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""PYaCy Level 2 示例 - P2P 节点发现与 DHT 搜索。
+"""PYaCy P2P 网络示例 — 节点发现与 DHT 搜索。
 
-本示例演示如何使用 PYaCy 的 Level 2 功能：
+本示例演示如何使用 PYaCy 的 P2P 网络功能：
 1. 创建 P2P 节点
 2. 连接到已知种子节点
 3. 执行 DHT 分布式搜索
@@ -20,9 +20,9 @@ from pyacy.p2p.seed import PEERTYPE_SENIOR
 
 
 def main():
-    """Level 2 示例主函数。"""
+    """P2P 网络示例主函数。"""
     print("=" * 60)
-    print("PYaCy Level 2 示例 - P2P 节点发现与 DHT 搜索")
+    print("PYaCy P2P 网络示例 — 节点发现与 DHT 搜索")
     print("=" * 60)
 
     # 1. 创建 P2P 节点

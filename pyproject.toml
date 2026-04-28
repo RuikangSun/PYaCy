@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "pyacy"
-version = "0.2.4"
+version = "0.2.5"
 description = "YaCy 分布式搜索引擎的 Python 客户端库"
 readme = "README.md"
 license = {text = "MIT"}

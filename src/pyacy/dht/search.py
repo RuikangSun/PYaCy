@@ -80,7 +80,7 @@ class DHTSearchResult:
     join_count: int = 0
     raw: dict[str, str] = field(default_factory=dict)
 
-    # 兼容 Level 0 的 SearchResult 接口
+    # 兼容 SearchResult 的统一接口
     @property
     def total_results(self) -> int:
         """引用总数（即搜索命中数）。"""

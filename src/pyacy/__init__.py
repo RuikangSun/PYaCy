@@ -6,7 +6,7 @@
 
 快速开始::
 
-    # Level 0: HTTP 客户端
+    # HTTP 客户端模式
     from pyacy import YaCyClient
 
     with YaCyClient("http://localhost:8090") as client:
@@ -14,7 +14,7 @@
         for item in results.items:
             print(f"{item.title} — {item.link}")
 
-    # Level 2: P2P 网络节点
+    # P2P 网络模式
     from pyacy import PYaCyNode
 
     node = PYaCyNode(name="my-pyacy")
@@ -63,9 +63,9 @@ from .dht import (
 )
 
 __all__ = [
-    # Level 0 - 客户端
+    # HTTP 客户端
     "YaCyClient",
-    # Level 2 - P2P 网络
+    # P2P 网络
     "PYaCyNode",
     "P2PProtocol",
     "HelloClient",
@@ -74,7 +74,7 @@ __all__ = [
     "PEERTYPE_JUNIOR",
     "PEERTYPE_SENIOR",
     "PEERTYPE_PRINCIPAL",
-    # Level 2 - DHT 搜索
+    # DHT 搜索
     "DHTSearchClient",
     "DHTSearchResult",
     "DHTReference",
@@ -97,4 +97,4 @@ __all__ = [
     "PushResponse",
 ]
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"

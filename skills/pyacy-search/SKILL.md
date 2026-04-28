@@ -123,7 +123,7 @@ result = search_client.fulltext_search(
 )
 ```
 
-## 本地索引搜索（Level 0，需本地 YaCy 实例）
+## 本地索引搜索（HTTP 客户端模式，需本地 YaCy 实例）
 
 如果本地运行了 YaCy 服务:
 

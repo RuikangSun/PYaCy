@@ -7,7 +7,7 @@ description: >
 license: MIT
 compatibility: >
   Python 3.9+, PYaCy>=0.2.3, 本地运行 YaCy 服务 (http://localhost:8090)。
-  爬虫功能需要 YaCy 服务器端支持，为 Level 0 HTTP 客户端功能。
+  爬虫功能需要 YaCy 服务器端支持，属于 HTTP 客户端功能。
   PYaCy 仓库: https://github.com/pyacy/pyacy
 metadata:
   level: 0

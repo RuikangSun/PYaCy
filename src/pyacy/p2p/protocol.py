@@ -36,6 +36,12 @@ DEFAULT_TIMEOUT: int = 30
 #: 网络名称（YaCy 默认）
 DEFAULT_NETWORK_NAME: str = "freeworld"
 
+try:
+    from importlib.metadata import version as _pkg_version
+    _VERSION = _pkg_version("pyacy")
+except Exception:
+    _VERSION = "0.2.5"  # fallback：与 pyproject.toml 保持同步
+
 
 class P2PResponse:
     """P2P 请求的解析响应。
@@ -185,7 +191,7 @@ class P2PProtocol:
         headers = {
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body)),
-            "User-Agent": "PYaCy/0.2.4 (Python YaCy P2P Client)",
+            "User-Agent": f"PYaCy/{_VERSION} (Python YaCy P2P Client)",
             "Accept": "*/*",
             "Connection": "close",
         }
@@ -412,7 +418,7 @@ class P2PProtocol:
         # 优先尝试 JSON
         json_url = f"{target_url.rstrip('/')}/yacy/seedlist.json"
         try:
-            req = Request(json_url, headers={"User-Agent": "PYaCy/0.2.4"})
+            req = Request(json_url, headers={"User-Agent": f"PYaCy/{_VERSION}"})
             with urlopen(req, timeout=self.timeout) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
             return data

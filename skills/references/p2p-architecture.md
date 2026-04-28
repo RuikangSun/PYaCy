@@ -18,7 +18,7 @@
 │  ┌─────────────────────────────────────────────────┐    │
 │  │                  PYaCy Library                    │    │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │    │
-│  │  │ Level 0  │ │ Level 2  │ │ Level 2          │ │    │
+│  │  │ HTTP 客户端  │ │ P2P 网络  │ │ P2P 网络          │ │    │
 │  │  │ HTTP     │ │ P2P      │ │ DHT Search       │ │    │
 │  │  │ Client   │ │ Network  │ │ Engine           │ │    │
 │  │  │ (Local)  │ │ (Junior) │ │ (Distributed)    │ │    │
@@ -35,9 +35,9 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-## Level 0 vs Level 2 对比
+## HTTP 客户端 vs P2P 网络 对比
 
-### Level 0 — HTTP 客户端
+### HTTP 客户端 — HTTP 客户端
 
 - **依赖**: 本地运行的 YaCy 服务器
 - **通信方式**: HTTP REST API (GET/POST)
@@ -45,7 +45,7 @@
 - **API**: search, suggest, status, version, network, crawl_start, push_document, delete_index
 - **模块**: `pyacy.client.YaCyClient`
 
-### Level 2 — P2P 网络节点
+### P2P 网络 — P2P 网络节点
 
 - **依赖**: 仅 Python + 网络连接（无本地 YaCy）
 - **通信方式**: P2P 协议（HTTP POST multipart + seed 字符串）
@@ -139,7 +139,7 @@ query_hashes = words_to_hash_query(["python", "distributed", "search"])
 
 ## 数据模型速查
 
-### YaCyClient 层（Level 0）
+### YaCyClient 层（HTTP 客户端）
 
 | 模型 | 关键属性 |
 |------|----------|
@@ -151,7 +151,7 @@ query_hashes = words_to_hash_query(["python", "distributed", "search"])
 | `NetworkInfo` | peer_name, peer_hash, active_peers, passive_peers |
 | `PushResponse` | success, message, url_hash |
 
-### P2P 层（Level 2）
+### P2P 层（P2P 网络）
 
 | 模型 | 关键属性 |
 |------|----------|

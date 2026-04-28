@@ -25,6 +25,12 @@ from ..utils import (
     encode_seed_string,
 )
 
+try:
+    from importlib.metadata import version as _pkg_version
+    _VERSION = _pkg_version("pyacy")
+except Exception:
+    _VERSION = "0.2.5"  # fallback：与 pyproject.toml 保持同步
+
 
 # ---------------------------------------------------------------------------
 # 节点类型常量
@@ -160,7 +166,7 @@ class Seed:
             SeedKeys.PORT: str(port),
             SeedKeys.IP: "",
             SeedKeys.IP6: "",
-            SeedKeys.VERSION: "0.2.4",
+            SeedKeys.VERSION: _VERSION,
             SeedKeys.FLAGS: "    ",
             SeedKeys.ISPEED: "0",
             SeedKeys.RSPEED: "0",

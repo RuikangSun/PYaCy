@@ -69,6 +69,12 @@ from .models import (
 # 模块级常量
 # ---------------------------------------------------------------------------
 
+try:
+    from importlib.metadata import version as _pkg_version
+    _VERSION = _pkg_version("pyacy")
+except Exception:
+    _VERSION = "0.2.5"  # fallback：与 pyproject.toml 保持同步
+
 #: 默认请求超时时间（秒）
 _DEFAULT_TIMEOUT: float = 30.0
 
@@ -356,7 +362,7 @@ class YaCyClient:
 
         # ---- 默认请求头 ----
         self._default_headers: dict[str, str] = {
-            "User-Agent": "PYaCy/0.2.4 (Python YaCy Client)",
+            "User-Agent": f"PYaCy/{_VERSION} (Python YaCy Client)",
             "Accept": "application/json, text/xml, */*",
         }
 
