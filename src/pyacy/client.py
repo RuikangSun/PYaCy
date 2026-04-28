@@ -20,18 +20,32 @@
     - 所有 API 方法返回强类型的数据模型对象，而非裸字典
     - 网络错误、超时、API 错误均映射为自定义异常
     - 请求前对关键参数进行校验，避免无效请求
+    - 零第三方依赖：仅使用 Python 标准库（urllib、http.client、json、ssl）
     - 不依赖 YaCy GPL 代码，纯基于公开 API 文档实现
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import ssl
+import time
+import socket
+from email.utils import formatdate
+from io import BytesIO
 from typing import Any
-from urllib.parse import urljoin
-
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urljoin, urlparse
+from urllib.request import (
+    Request,
+    urlopen,
+    build_opener,
+    HTTPSHandler,
+    HTTPHandler,
+    HTTPRedirectHandler,
+    HTTPBasicAuthHandler,
+    HTTPPasswordMgrWithDefaultRealm,
+)
 
 from .exceptions import (
     PYaCyAuthError,
@@ -72,6 +86,200 @@ _logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# 内部工具：HTTP 响应包装
+# ---------------------------------------------------------------------------
+
+
+class _HttpResponse:
+    """包装 urllib 的 HTTP 响应，提供与 requests.Response 兼容的接口。
+
+    不直接暴露 urllib HTTPResponse 对象，而是解析后缓存关键属性。
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        text: str,
+        headers: dict[str, str],
+    ):
+        self.status_code = status_code
+        self.text = text
+        self.headers = headers
+
+    def json(self) -> Any:
+        """尝试将响应体解析为 JSON。
+
+        Returns:
+            解析后的 JSON 数据。
+
+        Raises:
+            ValueError: 如果响应体不是有效的 JSON。
+        """
+        return json.loads(self.text)
+
+
+# ---------------------------------------------------------------------------
+# 内部工具：multipart 构建
+# ---------------------------------------------------------------------------
+
+
+def _build_multipart_body(
+    fields: dict[str, str],
+    files: dict[str, tuple[str, bytes, str]],
+    boundary: str,
+) -> bytes:
+    """构建 multipart/form-data 请求体。
+
+    Args:
+        fields: 普通表单字段，键为字段名，值为字段值。
+        files: 文件字段，键为字段名，值为 ``(文件名, 内容, MIME类型)`` 元组。
+        boundary: 分隔边界字符串。
+
+    Returns:
+        完整的 multipart 请求体字节串。
+    """
+    body_parts: list[bytes] = []
+
+    def _add_line(line: str) -> None:
+        body_parts.append(line.encode("utf-8"))
+
+    def _add_bytes(data: bytes) -> None:
+        body_parts.append(data)
+
+    # 普通字段
+    for name, value in fields.items():
+        _add_line(f"--{boundary}")
+        _add_line(f'Content-Disposition: form-data; name="{name}"')
+        _add_line("")
+        _add_line(value)
+
+    # 文件字段
+    for name, (filename, content, mime_type) in files.items():
+        _add_line(f"--{boundary}")
+        _add_line(
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"'
+        )
+        _add_line(f"Content-Type: {mime_type}")
+        _add_line("")
+        _add_bytes(content)
+
+    # 结束边界
+    _add_line(f"--{boundary}--")
+
+    return b"\r\n".join(body_parts)
+
+
+# ---------------------------------------------------------------------------
+# 内部工具：重试循环
+# ---------------------------------------------------------------------------
+
+
+def _http_request_with_retry(
+    method: str,
+    url: str,
+    *,
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = _DEFAULT_TIMEOUT,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
+    backoff_factor: float = _DEFAULT_BACKOFF_FACTOR,
+    retry_codes: frozenset[int] = _RETRY_STATUS_CODES,
+    opener: Any = None,
+) -> _HttpResponse:
+    """发送 HTTP 请求并自动重试可恢复的错误。
+
+    此函数是 client.py 内部所有 HTTP 请求的底层通道。
+    使用标准库 urllib，零第三方依赖。
+
+    Args:
+        method: HTTP 方法（GET / POST）。
+        url: 完整请求 URL。
+        data: 请求体（POST 时使用）。
+        headers: 自定义请求头。
+        timeout: 超时时间（秒）。
+        max_retries: 最大重试次数。
+        backoff_factor: 指数退避因子。
+        retry_codes: 应触发重试的 HTTP 状态码集合。
+        opener: urllib OpenerDirector（用于 SSL 配置和认证）。
+
+    Returns:
+        _HttpResponse: 解析后的响应对象。
+
+    Raises:
+        PYaCyTimeoutError: 请求超时。
+        PYaCyConnectionError: 网络连接失败。
+    """
+    req_headers = headers.copy() if headers else {}
+
+    if data is not None:
+        req_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+
+    request = Request(url, data=data, headers=req_headers, method=method)
+
+    last_exception: Exception | None = None
+    send_opener = opener or build_opener()
+
+    for attempt in range(max_retries + 1):
+        try:
+            with send_opener.open(request, timeout=timeout) as resp:
+                raw_body = resp.read()
+                encoding = resp.headers.get_content_charset("utf-8") or "utf-8"
+                text = raw_body.decode(encoding, errors="replace")
+                status = resp.status
+                resp_headers = dict(resp.headers)
+
+            # 重试触发码 — 在下次循环重试
+            if status in retry_codes and attempt < max_retries:
+                _logger.debug(
+                    "HTTP %d（可重试），第 %d/%d 次尝试，等待 %.1fs",
+                    status, attempt + 1, max_retries + 1,
+                    backoff_factor * (2 ** attempt),
+                )
+                time.sleep(backoff_factor * (2 ** attempt))
+                continue
+
+            return _HttpResponse(
+                status_code=status,
+                text=text,
+                headers=resp_headers,
+            )
+
+        except socket.timeout as exc:
+            last_exception = PYaCyTimeoutError(
+                f"请求超时: {method} {url} (超时 {timeout}s)",
+                timeout=timeout,
+            )
+            last_exception.__cause__ = exc
+            if attempt < max_retries:
+                _logger.debug("超时重试 %d/%d", attempt + 1, max_retries + 1)
+                time.sleep(backoff_factor * (2 ** attempt))
+                continue
+
+        except (URLError, OSError) as exc:
+            last_exception = PYaCyConnectionError(
+                f"无法连接到 P2P 节点: {url}",
+                original_error=exc,
+            )
+            if attempt < max_retries:
+                _logger.debug("连接失败重试 %d/%d", attempt + 1, max_retries + 1)
+                time.sleep(backoff_factor * (2 ** attempt))
+                continue
+
+        except Exception as exc:
+            last_exception = PYaCyConnectionError(
+                f"请求发生未知错误: {method} {url}",
+                original_error=exc,
+            )
+            if attempt < max_retries:
+                time.sleep(backoff_factor * (2 ** attempt))
+                continue
+
+    # 所有重试均失败
+    assert last_exception is not None
+    raise last_exception
+
+
+# ---------------------------------------------------------------------------
 # YaCyClient
 # ---------------------------------------------------------------------------
 
@@ -82,11 +290,12 @@ class YaCyClient:
     封装了与 YaCy 节点交互的所有 HTTP 请求，
     提供类型安全的 API 访问方式。
 
+    使用纯 Python 标准库（urllib），零第三方依赖。
+
     Attributes:
         base_url: YaCy 服务的基础 URL（如 ``http://localhost:8090``）。
         timeout: 默认请求超时时间（秒）。
         auth: (用户名, 密码) 元组，用于 HTTP Basic Auth。
-        session: 底层 ``requests.Session`` 实例。
     """
 
     def __init__(
@@ -123,37 +332,35 @@ class YaCyClient:
         self.base_url: str = url
         self.timeout: float = timeout
         self.auth: tuple[str, str] | None = auth
+        self.max_retries: int = max_retries
+        self.verify_ssl: bool = verify_ssl
 
-        # ---- 构建 Session ----
-        self.session = requests.Session()
+        # ---- 构建 opener（SSL 配置 + 认证） ----
+        ssl_context = None if verify_ssl else ssl.create_default_context()
+        if not verify_ssl:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
-        # 配置重试策略（指数退避）
-        retry_strategy = Retry(
-            total=max_retries,
-            backoff_factor=_DEFAULT_BACKOFF_FACTOR,
-            status_forcelist=list(_RETRY_STATUS_CODES),
-            allowed_methods=["GET", "HEAD", "OPTIONS"],
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        handlers: list[Any] = [
+            HTTPHandler(),
+            HTTPSHandler(context=ssl_context),
+            HTTPRedirectHandler(),
+        ]
 
-        # 基础认证
         if auth:
-            self.session.auth = auth
+            password_mgr = HTTPPasswordMgrWithDefaultRealm()
+            password_mgr.add_password(None, url, auth[0], auth[1])
+            handlers.append(HTTPBasicAuthHandler(password_mgr))
 
-        # SSL 验证
-        self.session.verify = verify_ssl
+        self._opener = build_opener(*handlers)
 
-        # 默认请求头
-        self.session.headers.update(
-            {
-                "User-Agent": "PYaCy/0.2.3 (Python YaCy Client)",
-                "Accept": "application/json, text/xml, */*",
-            }
-        )
+        # ---- 默认请求头 ----
+        self._default_headers: dict[str, str] = {
+            "User-Agent": "PYaCy/0.2.4 (Python YaCy Client)",
+            "Accept": "application/json, text/xml, */*",
+        }
 
-        _logger.info("YaCyClient 初始化完成: base_url=%s, timeout=%.1fs", url, timeout)
+        _logger.debug("YaCyClient 初始化完成: base_url=%s, timeout=%.1fs", url, timeout)
 
     # -------------------------------------------------------------------
     # 内部工具方法
@@ -170,6 +377,21 @@ class YaCyClient:
         """
         return urljoin(self.base_url + "/", path.lstrip("/"))
 
+    @staticmethod
+    def _clean_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
+        """清理查询参数，移除 None 值。
+
+        Args:
+            params: 原始参数字典。
+
+        Returns:
+            移除 None 值后的参数字典。如果原字典为 None 或空，
+            返回 None。
+        """
+        if params is None:
+            return None
+        return {k: v for k, v in params.items() if v is not None}
+
     def _request(
         self,
         method: str,
@@ -177,28 +399,23 @@ class YaCyClient:
         *,
         params: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
-        files: dict[str, Any] | None = None,
+        files: dict[str, tuple[str, bytes, str]] | None = None,
         timeout: float | None = None,
-        expect_json: bool = True,
-    ) -> requests.Response:
+    ) -> _HttpResponse:
         """发送 HTTP 请求并处理通用错误。
 
-        这是所有 API 调用的底层方法，负责：
-        1. 发送请求
-        2. 检查 HTTP 状态码
-        3. 将网络/超时错误映射为自定义异常
+        这是所有 API 调用的底层方法。
 
         Args:
             method: HTTP 方法（GET / POST）。
             path: API 路径（相对于 base_url）。
             params: URL 查询参数。
             data: POST 表单数据。
-            files: 上传文件。
+            files: 文件上传列表。
             timeout: 超时时间（秒），None 则使用实例默认值。
-            expect_json: 是否期望 JSON 响应。
 
         Returns:
-            原始的 ``requests.Response`` 对象。
+            ``_HttpResponse`` 对象。
 
         Raises:
             PYaCyConnectionError: 网络连接失败。
@@ -211,33 +428,40 @@ class YaCyClient:
         timeout_val = timeout if timeout is not None else self.timeout
         cleaned_params = self._clean_params(params)
 
-        _logger.debug("%s %s params=%s", method, url, cleaned_params)
+        # 追加查询参数
+        if cleaned_params:
+            query_string = urlencode(cleaned_params, doseq=True)
+            url = f"{url}?{query_string}"
 
-        try:
-            response = self.session.request(
-                method=method,
-                url=url,
-                params=cleaned_params,
-                data=data,
-                files=files,
-                timeout=timeout_val,
-            )
-        except requests.exceptions.Timeout as exc:
-            raise PYaCyTimeoutError(
-                f"请求超时: {method} {url} (超时 {timeout_val}s)",
-                timeout=timeout_val,
-            ) from exc
-        except requests.exceptions.ConnectionError as exc:
-            raise PYaCyConnectionError(
-                f"无法连接到 YaCy 服务: {url}\n"
-                f"请确认 YaCy 已启动且地址正确。",
-                original_error=exc,
-            ) from exc
-        except requests.exceptions.RequestException as exc:
-            raise PYaCyConnectionError(
-                f"请求发生未知错误: {method} {url}",
-                original_error=exc,
-            ) from exc
+        # 构建请求头
+        req_headers = dict(self._default_headers)
+
+        body: bytes | None = None
+        if files:
+            # multipart/form-data 模式
+            boundary = f"----PYaCyBoundary{int(time.time() * 1000)}"
+            req_headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+            # data 混入 multipart
+            multipart_fields: dict[str, str] = {}
+            if data:
+                multipart_fields = {k: str(v) for k, v in data.items()}
+            body = _build_multipart_body(multipart_fields, files, boundary)
+        elif data:
+            # application/x-www-form-urlencoded
+            body = urlencode(data, doseq=True).encode("utf-8")
+            req_headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+        _logger.debug("%s %s", method, url)
+
+        response = _http_request_with_retry(
+            method=method,
+            url=url,
+            data=body,
+            headers=req_headers,
+            timeout=timeout_val,
+            max_retries=self.max_retries,
+            opener=self._opener,
+        )
 
         # ---- 状态码检查 ----
         if response.status_code == 401:
@@ -266,21 +490,6 @@ class YaCyClient:
 
         return response
 
-    @staticmethod
-    def _clean_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
-        """清理查询参数，移除 None 值。
-
-        Args:
-            params: 原始参数字典。
-
-        Returns:
-            移除 None 值后的参数字典。如果原字典为 None 或空，
-            返回 None。
-        """
-        if params is None:
-            return None
-        return {k: v for k, v in params.items() if v is not None}
-
     def _get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """发送 GET 请求并返回 JSON 数据。
 
@@ -296,7 +505,6 @@ class YaCyClient:
         """
         response = self._request("GET", path, params=params)
 
-        # 部分 API 返回 JSON 但 Content-Type 可能是 text/html
         try:
             return response.json()
         except ValueError as exc:
@@ -304,24 +512,6 @@ class YaCyClient:
                 f"无法解析 JSON 响应: {response.text[:300]}",
                 status_code=response.status_code,
             ) from exc
-
-    def _post_form(
-        self,
-        path: str,
-        data: dict[str, Any] | None = None,
-        files: dict[str, Any] | None = None,
-    ) -> requests.Response:
-        """发送 POST 请求（表单格式）。
-
-        Args:
-            path: API 路径。
-            data: POST 表单字段。
-            files: 上传的文件。
-
-        Returns:
-            HTTP 响应对象。
-        """
-        return self._request("POST", path, data=data, files=files)
 
     # -------------------------------------------------------------------
     # 搜索 API
@@ -353,27 +543,16 @@ class YaCyClient:
             resource: 搜索范围。``"local"`` 仅搜索本地索引，
                 ``"global"`` 向 P2P 网络中所有节点发送搜索请求。
                 默认 ``"local"``。
-            maximum_records: 返回的最大结果数。未认证时限制为 10 条。
-                默认 10。
-            start_record: 结果起始偏移量（0-based）。
-                用于分页，例如 ``start_record=10, maximum_records=10``
-                返回第 11-20 条结果。默认 0。
+            maximum_records: 返回的最大结果数。默认 10。
+            start_record: 结果起始偏移量（0-based）。默认 0。
             content_dom: 内容类型过滤。可选值: ``"text"`` | ``"image"``
                 | ``"audio"`` | ``"video"`` | ``"app"``。
             verify: 结果验证策略。
-                - ``"true"``: 验证 URL 并返回摘要片段
-                - ``"false"``: 不验证，速度更快
-                - ``"iffresh"``: 缓存新鲜时使用缓存
-                - ``"ifexist"``: 有缓存就用缓存
-                - ``"cacheonly"``: 只用缓存
             url_mask_filter: URL 过滤正则表达式。
-                只返回 URL 匹配此正则的结果。
             prefer_mask_filter: URL 偏好正则。
-                优先返回 URL 匹配此正则的结果。
-            language: 语言代码过滤（如 ``"lang_en"``）。
-            navigators: 导航器显示选项。``"all"`` 显示所有，
-                ``"none"`` 不显示。默认 ``"all"``。
-            timeout: 本次请求的超时时间（秒），None 则使用默认值。
+            language: 语言代码过滤。
+            navigators: 导航器显示选项。``"all"`` 显示所有。
+            timeout: 本次请求的超时时间（秒）。
 
         Returns:
             SearchResponse: 包含搜索结果的结构化对象。
@@ -382,13 +561,6 @@ class YaCyClient:
             PYaCyValidationError: 如果 query 为空。
             PYaCyConnectionError: 网络连接失败。
             PYaCyTimeoutError: 请求超时。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> results = client.search("python", resource="global", maximum_records=20)
-            >>> print(f"找到 {results.total_results} 条结果")
-            >>> for item in results.items:
-            ...     print(f"{item.title} — {item.link}")
         """
         if not query or not query.strip():
             raise PYaCyValidationError("搜索关键词不能为空")
@@ -423,18 +595,11 @@ class YaCyClient:
 
         Raises:
             PYaCyValidationError: 如果 query 为空。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> suggestions = client.suggest("pyth")
-            >>> for s in suggestions.suggestions:
-            ...     print(s.word)
         """
         if not query or not query.strip():
             raise PYaCyValidationError("搜索建议关键词不能为空")
 
         data = self._get_json("/suggest.json", params={"query": query.strip()})
-        # 响应是 JSON 数组
         if isinstance(data, list):
             return SuggestResponse.from_json(data)
         return SuggestResponse(raw=[data] if isinstance(data, dict) else [])
@@ -446,17 +611,14 @@ class YaCyClient:
     def status(self, *, timeout: float | None = None) -> PeerStatus:
         """获取 YaCy 节点的运行状态。
 
-        对应 YaCy API ``/api/status_p.json``（受保护的 API，
-        通常需要从 localhost 访问或提供认证凭据）。
+        对应 YaCy API ``/api/status_p.json``。
 
         Returns:
-            PeerStatus: 节点状态信息（运行状态、内存、索引大小等）。
+            PeerStatus: 节点状态信息。
 
         Example:
             >>> client = YaCyClient()
             >>> status = client.status()
-            >>> print(f"状态: {status.status}")
-            >>> print(f"内存使用: {status.memory_used_mb:.0f} MB")
             >>> print(f"索引文档数: {status.index_size}")
         """
         data = self._get_json("/api/status_p.json")
@@ -468,12 +630,7 @@ class YaCyClient:
         对应 YaCy API ``/api/version.json``。
 
         Returns:
-            VersionInfo: 版本、构建日期、Java 版本等信息。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> vi = client.version()
-            >>> print(f"YaCy {vi.version}, 构建日期 {vi.build_date}")
+            VersionInfo: 版本、构建日期等信息。
         """
         data = self._get_json("/api/version.json")
         return VersionInfo.from_json(data)
@@ -484,13 +641,7 @@ class YaCyClient:
         对应 YaCy API ``/Network.json``。
 
         Returns:
-            NetworkInfo: 活跃节点数、总 URL 数等网络统计信息。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> net = client.network()
-            >>> print(f"活跃节点: {net.active_peers}")
-            >>> print(f"网络总 URL: {net.total_urls}")
+            NetworkInfo: 活跃节点数、总 URL 数等。
         """
         data = self._get_json("/Network.json")
         return NetworkInfo.from_json(data)
@@ -517,34 +668,21 @@ class YaCyClient:
         对应 YaCy 的 ``/Crawler_p.html`` 端点。
 
         Args:
-            start_url: 爬虫起始 URL。可以是单个 URL 或以逗号分隔的多个 URL。
-            crawling_depth: 爬取深度。
-                - 0: 仅爬取起始页面
-                - 1: 爬取起始页面及直接链接的页面
-                - >1: 更深层爬取
-                默认 1。
-            must_match: URL 必须匹配的正则表达式。只有匹配的页面才会被爬取。
-            must_not_match: URL 不得匹配的正则表达式。匹配的页面会被排除。
+            start_url: 爬虫起始 URL。
+            crawling_depth: 爬取深度。默认 1。
+            must_match: URL 必须匹配的正则表达式。
+            must_not_match: URL 不得匹配的正则表达式。
             index_text: 是否索引文本内容。默认 True。
             index_media: 是否索引媒体文件。默认 False。
-            crawling_q: 爬虫入口选择。``"crawl_proxy"`` 使用代理爬虫。
-            recrawl_cycle: 重新爬取周期。如 ``"daily"`` | ``"weekly"`` 等。
-            timeout: 本次请求的超时时间（秒）。
+            crawling_q: 爬虫入口选择。
+            recrawl_cycle: 重新爬取周期。
+            timeout: 超时时间（秒）。
 
         Returns:
             包含爬虫启动结果信息的字典。
 
         Raises:
             PYaCyValidationError: 如果 start_url 为空。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> result = client.crawl_start(
-            ...     "https://example.com",
-            ...     crawling_depth=1,
-            ...     must_match="example\\.com/.*",
-            ... )
-            >>> print(result)
         """
         if not start_url or not start_url.strip():
             raise PYaCyValidationError("起始 URL 不能为空")
@@ -566,8 +704,7 @@ class YaCyClient:
         if recrawl_cycle:
             data["recrawl"] = recrawl_cycle
 
-        response = self._post_form("/Crawler_p.html", data=data)
-        # Crawler_p.html 返回 HTML 页面，因此尝试解析为 JSON 或直接返回文本
+        response = self._request("POST", "/Crawler_p.html", data=data)
         return {
             "status_code": response.status_code,
             "message": "爬虫任务已提交",
@@ -586,7 +723,7 @@ class YaCyClient:
         index_media: bool = False,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """以专家模式启动爬虫任务（更多控制选项）。
+        """以专家模式启动爬虫任务。
 
         对应 YaCy 的 ``/CrawlStartExpert.html`` 端点。
 
@@ -595,8 +732,7 @@ class YaCyClient:
             crawling_depth: 爬取深度。默认 1。
             must_match: 必须匹配的正则。
             must_not_match: 不得匹配的正则。
-            crawl_order: 爬取顺序。可选值: ``"fill"``（广度优先填充）、
-                ``"load"``（广度优先加载）等。
+            crawl_order: 爬取顺序。
             index_text: 是否索引文本。默认 True。
             index_media: 是否索引媒体。默认 False。
             timeout: 超时时间（秒）。
@@ -623,7 +759,7 @@ class YaCyClient:
         if crawl_order:
             data["crawlOrder"] = crawl_order
 
-        response = self._post_form("/CrawlStartExpert.html", data=data)
+        response = self._request("POST", "/CrawlStartExpert.html", data=data)
         return {
             "status_code": response.status_code,
             "message": "专家模式爬虫任务已提交",
@@ -652,46 +788,29 @@ class YaCyClient:
 
         对应 YaCy API ``/api/push_p.json``。
 
-        此 API 使用 HTTP POST multipart/form-data 方式提交文档。
-        文档会被 YaCy 内置解析器处理并写入 Solr 索引。
-
         Args:
-            url: 文档的 URL（将作为搜索结果中的链接）。
+            url: 文档的 URL。
             content: 文档内容（文本或二进制数据）。
-            content_type: MIME 类型，如 ``"text/html"``、
-                ``"text/plain"``、``"application/pdf"`` 等。
-                默认 ``"text/html"``。
-            collection: 文档所属的集合名称。用于搜索结果的分面导航。
-            last_modified: 文档最后修改时间（RFC 1123 格式，如
-                ``"Tue, 15 Nov 1994 12:45:26 GMT"``）。
-            title: 媒体文档的标题（当 content_type 为图像/视频等时）。
-            keywords: 媒体文档的关键词（空格分隔）。
-            commit: 是否立即提交索引使其可搜索。默认 False。
-                设为 True 会降低性能，仅推荐在少量文档时使用。
-            synchronous: 是否同步处理。默认 False（异步处理，性能更优）。
-            timeout: 超时时间（秒）。上传大文件时建议适当增加。
+            content_type: MIME 类型。默认 ``"text/html"``。
+            collection: 集合名称。
+            last_modified: 最后修改时间（RFC 1123 格式）。
+            title: 媒体文档标题。
+            keywords: 媒体关键词。
+            commit: 是否立即提交索引。默认 False。
+            synchronous: 是否同步处理。默认 False。
+            timeout: 超时时间（秒）。
 
         Returns:
-            PushResponse: 推送结果（成功/失败详情）。
+            PushResponse: 推送结果。
 
         Raises:
             PYaCyValidationError: 如果 url 为空。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> result = client.push_document(
-            ...     url="https://example.com/page.html",
-            ...     content="<html><body>Hello World</body></html>",
-            ...     content_type="text/html",
-            ...     collection="test",
-            ... )
-            >>> print(f"推送成功: {result.success_all}")
         """
         if not url or not url.strip():
             raise PYaCyValidationError("文档 URL 不能为空")
 
         # 构建 multipart 数据
-        data_fields = {
+        data_fields: dict[str, str] = {
             "count": "1",
             "url-0": url.strip(),
             "synchronous": "true" if synchronous else "false",
@@ -700,7 +819,7 @@ class YaCyClient:
         if collection:
             data_fields["collection-0"] = collection
 
-        # 构建响应头
+        # 响应头
         response_headers = [f"Content-Type:{content_type}"]
         if last_modified:
             response_headers.append(f"Last-Modified:{last_modified}")
@@ -708,22 +827,18 @@ class YaCyClient:
             response_headers.append(f"X-YaCy-Media-Title:{title}")
         if keywords:
             response_headers.append(f"X-YaCy-Media-Keywords:{keywords}")
-        data_fields["responseHeader-0"] = response_headers
+        data_fields["responseHeader-0"] = ",".join(response_headers)
 
-        # 将 content 转换为字节
-        if isinstance(content, str):
-            content_bytes = content.encode("utf-8")
-        else:
-            content_bytes = content
+        # 内容转字节
+        content_bytes = content if isinstance(content, bytes) else content.encode("utf-8")
 
-        files = {"data-0": ("document", content_bytes, content_type)}
+        files_map = {"data-0": ("document", content_bytes, content_type)}
 
-        # 使用 multipart/form-data 发送
         response = self._request(
             "POST",
             "/api/push_p.json",
             data=data_fields,
-            files=files,
+            files=files_map,
             timeout=timeout,
         )
         return PushResponse.from_json(response.json())
@@ -738,17 +853,8 @@ class YaCyClient:
     ) -> PushResponse:
         """批量推送多个文档到 YaCy 索引。
 
-        对应 YaCy API ``/api/push_p.json`` 的批量模式。
-
         Args:
-            documents: 文档列表，每个元素为包含以下键的字典：
-                - ``url`` (必填): 文档 URL
-                - ``content`` (必填): 文档内容（str 或 bytes）
-                - ``content_type`` (可选): MIME 类型，默认 ``"text/html"``
-                - ``collection`` (可选): 集合名称
-                - ``last_modified`` (可选): 最后修改时间
-                - ``title`` (可选): 媒体标题
-                - ``keywords`` (可选): 关键词
+            documents: 文档列表，每个元素包含 ``url``、``content`` 等键。
             commit: 是否立即提交。默认 False。
             synchronous: 是否同步处理。默认 False。
             timeout: 超时时间（秒）。
@@ -763,12 +869,12 @@ class YaCyClient:
             raise PYaCyValidationError("文档列表不能为空")
 
         count = len(documents)
-        data_fields: dict[str, Any] = {
+        data_fields: dict[str, str] = {
             "count": str(count),
             "synchronous": "true" if synchronous else "false",
             "commit": "true" if commit else "false",
         }
-        files: dict[str, Any] = {}
+        files_map: dict[str, tuple[str, bytes, str]] = {}
 
         for i, doc in enumerate(documents):
             url = doc.get("url", "")
@@ -778,29 +884,27 @@ class YaCyClient:
             data_fields[f"url-{i}"] = url
 
             content = doc.get("content", "")
-            if isinstance(content, str):
-                content = content.encode("utf-8")
-            content_type = doc.get("content_type", "text/html")
-            files[f"data-{i}"] = (f"document-{i}", content, content_type)
+            content_bytes = content if isinstance(content, bytes) else str(content).encode("utf-8")
+            ct = doc.get("content_type", "text/html")
+            files_map[f"data-{i}"] = (f"document-{i}", content_bytes, ct)
 
             if doc.get("collection"):
                 data_fields[f"collection-{i}"] = doc["collection"]
 
-            # 构建响应头
-            headers_list = [f"Content-Type:{content_type}"]
+            headers_list = [f"Content-Type:{ct}"]
             if doc.get("last_modified"):
                 headers_list.append(f"Last-Modified:{doc['last_modified']}")
             if doc.get("title"):
                 headers_list.append(f"X-YaCy-Media-Title:{doc['title']}")
             if doc.get("keywords"):
                 headers_list.append(f"X-YaCy-Media-Keywords:{doc['keywords']}")
-            data_fields[f"responseHeader-{i}"] = headers_list
+            data_fields[f"responseHeader-{i}"] = ",".join(headers_list)
 
         response = self._request(
             "POST",
             "/api/push_p.json",
             data=data_fields,
-            files=files,
+            files=files_map,
             timeout=timeout,
         )
         return PushResponse.from_json(response.json())
@@ -819,26 +923,22 @@ class YaCyClient:
     ) -> dict[str, Any]:
         """从 Solr 索引中删除文档。
 
-        对应 YaCy API ``/IndexDeletion_p.html``。
-
         Args:
-            url: 要删除的完整文档 URL。
+            url: 要删除的文档 URL。
             host: 要删除的主机名下所有文档。
-            delete_all: 如果为 True，清空整个索引（慎用！）。
+            delete_all: True 则清空整个索引（慎用！）。
             timeout: 超时时间（秒）。
 
         Returns:
             删除操作结果信息。
 
         Raises:
-            PYaCyValidationError: 如果没有指定删除目标。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> result = client.delete_index(url="https://example.com/page.html")
+            PYaCyValidationError: 未指定删除目标。
         """
         if not delete_all and not url and not host:
-            raise PYaCyValidationError("必须指定至少一个删除目标: url、host 或 delete_all=True")
+            raise PYaCyValidationError(
+                "必须指定至少一个删除目标: url、host 或 delete_all=True"
+            )
 
         data: dict[str, str] = {}
         if delete_all:
@@ -848,7 +948,7 @@ class YaCyClient:
         if host:
             data["host"] = host
 
-        response = self._post_form("/IndexDeletion_p.html", data=data)
+        response = self._request("POST", "/IndexDeletion_p.html", data=data)
         return {
             "status_code": response.status_code,
             "message": "索引删除请求已提交",
@@ -861,21 +961,15 @@ class YaCyClient:
     def get_blacklists(self, *, timeout: float | None = None) -> dict[str, Any]:
         """获取所有黑名单的元数据列表。
 
-        对应 YaCy API ``/api/blacklists/get_metadata_p.json``。
-
         Returns:
             黑名单元数据字典。
-
-        Example:
-            >>> client = YaCyClient()
-            >>> lists = client.get_blacklists()
         """
         return self._get_json("/api/blacklists/get_metadata_p.json")
 
-    def get_blacklist(self, list_name: str, *, timeout: float | None = None) -> dict[str, Any]:
+    def get_blacklist(
+        self, list_name: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
         """获取指定黑名单的内容。
-
-        对应 YaCy API ``/api/blacklists/get_list_p.json``。
 
         Args:
             list_name: 黑名单名称。
@@ -888,7 +982,10 @@ class YaCyClient:
         """
         if not list_name or not list_name.strip():
             raise PYaCyValidationError("黑名单名称不能为空")
-        return self._get_json("/api/blacklists/get_list_p.json", params={"list": list_name.strip()})
+        return self._get_json(
+            "/api/blacklists/get_list_p.json",
+            params={"list": list_name.strip()},
+        )
 
     def add_blacklist_entry(
         self,
@@ -898,8 +995,6 @@ class YaCyClient:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """向黑名单添加条目。
-
-        对应 YaCy API ``/api/blacklists/add_entry_p.json``。
 
         Args:
             list_name: 黑名单名称。
@@ -929,13 +1024,11 @@ class YaCyClient:
     def ping(self, *, timeout: float = 5.0) -> bool:
         """检查 YaCy 服务是否可达。
 
-        通过调用 ``/api/version.json`` 来验证连接。
-
         Args:
             timeout: 超时时间（秒）。默认 5 秒。
 
         Returns:
-            如果服务可达返回 True，否则返回 False。
+            True 表示可达，False 表示不可达。
         """
         try:
             self.version(timeout=timeout)
@@ -944,22 +1037,18 @@ class YaCyClient:
             return False
 
     def close(self) -> None:
-        """关闭底层 HTTP 会话连接。
+        """释放网络资源。
 
-        在不再使用客户端时调用以释放网络资源。
+        urllib 下连接为无状态，此方法主要用于与上下文管理器兼容。
         """
-        self.session.close()
-        _logger.info("YaCyClient 会话已关闭")
+        _logger.debug("YaCyClient 会话已关闭")
 
     def __enter__(self) -> "YaCyClient":
-        """上下文管理器入口。
-
-        支持 ``with YaCyClient(...) as client:`` 用法。
-        """
+        """上下文管理器入口。"""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """上下文管理器出口，自动关闭会话。"""
+        """上下文管理器出口。"""
         self.close()
         return False
 

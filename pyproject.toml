@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "pyacy"
-version = "0.2.3"
+version = "0.2.4"
 description = "YaCy 分布式搜索引擎的 Python 客户端库"
 readme = "README.md"
 license = {text = "MIT"}
@@ -26,7 +26,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "requests>=2.28.0",
+    # PYaCy 使用纯 Python 标准库（urllib），零第三方运行时依赖
 ]
 
 [project.optional-dependencies]
@@ -39,9 +39,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pyacy/pyacy"
-Documentation = "https://pyacy.readthedocs.io"
-Repository = "https://github.com/pyacy/pyacy.git"
+Homepage = "https://github.com/RuikangSun/PYaCy"
+Documentation = "https://github.com/RuikangSun/PYaCy#readme"
+Repository = "https://github.com/RuikangSun/PYaCy.git"
 
 [tool.setuptools.packages.find]
 where = ["src"]

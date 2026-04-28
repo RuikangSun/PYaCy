@@ -160,7 +160,7 @@ class Seed:
             SeedKeys.PORT: str(port),
             SeedKeys.IP: "",
             SeedKeys.IP6: "",
-            SeedKeys.VERSION: "0.2.3",
+            SeedKeys.VERSION: "0.2.4",
             SeedKeys.FLAGS: "    ",
             SeedKeys.ISPEED: "0",
             SeedKeys.RSPEED: "0",

@@ -1,1 +1,2 @@
-requests>=2.28.0
+# PYaCy uses only Python standard library — no third-party runtime dependencies.
+# For development dependencies, see requirements-dev.txt

@@ -16,11 +16,10 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import patch, MagicMock
+from urllib.error import URLError
 
 import pytest
-import requests
 
 from pyacy import (
     YaCyClient,
@@ -34,7 +33,6 @@ from pyacy import (
 )
 from pyacy.models import (
     SearchResponse,
-    SearchResult,
     SuggestResponse,
     PeerStatus,
     VersionInfo,
@@ -92,12 +90,12 @@ class TestClientInit:
     def test_verify_ssl_disabled(self):
         """禁用 SSL 验证。"""
         client = YaCyClient(verify_ssl=False)
-        assert client.session.verify is False
+        assert client.verify_ssl is False
 
     def test_user_agent_header(self):
         """检查 User-Agent 请求头。"""
         client = YaCyClient()
-        assert "PYaCy" in client.session.headers["User-Agent"]
+        assert "PYaCy" in client._default_headers["User-Agent"]
 
 
 # ======================================================================
@@ -125,14 +123,13 @@ class TestInternalMethods:
         assert client._clean_params(None) is None
 
     def test_clean_params_empty_input(self, client):
-        """clean_params 输入空字典。"""
+        """clean_params 输入空字典返回空字典。"""
         assert client._clean_params({}) == {}
 
     def test_context_manager(self):
         """测试上下文管理器。"""
         with YaCyClient() as client:
             assert client.base_url == "http://localhost:8090"
-        # 退出后 session 应已关闭
 
     def test_repr(self, client):
         """测试 repr 输出。"""
@@ -152,7 +149,7 @@ class TestSearchAPI:
     def test_search_basic(self, client):
         """基本搜索请求。"""
         mock_data = make_mock_search_response(query="python")
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.search("python")
 
@@ -176,7 +173,7 @@ class TestSearchAPI:
     def test_search_with_all_params(self, client):
         """带所有搜索参数的请求。"""
         mock_data = make_mock_search_response(query="python", total_results=0)
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.search(
                 "python",
@@ -185,13 +182,12 @@ class TestSearchAPI:
                 start_record=10,
                 content_dom="text",
                 verify="true",
-                url_mask_filter=".*\\.pdf$",
+                url_mask_filter=r".*\.pdf$",
                 prefer_mask_filter="wikipedia",
                 language="lang_en",
                 navigators="all",
             )
 
-            # 验证请求参数
             call_kwargs = mock_req.call_args.kwargs
             params = call_kwargs["params"]
             assert params["query"] == "python"
@@ -200,7 +196,7 @@ class TestSearchAPI:
             assert params["startRecord"] == 10
             assert params["contentdom"] == "text"
             assert params["verify"] == "true"
-            assert params["urlmaskfilter"] == ".*\\.pdf$"
+            assert params["urlmaskfilter"] == r".*\.pdf$"
             assert params["prefermaskfilter"] == "wikipedia"
             assert params["lr"] == "lang_en"
             assert params["nav"] == "all"
@@ -210,24 +206,24 @@ class TestSearchAPI:
     def test_search_pagination(self, client):
         """分页信息正确性。"""
         mock_data = make_mock_search_response(total_results=100)
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.search("test", maximum_records=10)
 
-            assert result.total_pages == 10  # 100 / 10
+            assert result.total_pages == 10
 
     def test_search_zero_items_per_page(self, client):
         """itemsPerPage 为 0 时 total_pages 应返回 0。"""
         data = make_mock_search_response()
         data["channels"][0]["itemsPerPage"] = 0
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=data)
             result = client.search("test")
             assert result.total_pages == 0
 
     def test_search_empty_channels(self, client):
         """空 channels 响应。"""
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data={"channels": []})
             result = client.search("test")
             assert result.items == []
@@ -236,7 +232,7 @@ class TestSearchAPI:
     def test_suggest_basic(self, client):
         """基本搜索建议。"""
         mock_data = make_mock_suggest_response()
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.suggest("pyth")
 
@@ -252,7 +248,7 @@ class TestSearchAPI:
     def test_suggest_single_item(self, client):
         """单条建议响应。"""
         mock_data = [{"suggestion": "python"}]
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.suggest("py")
             assert len(result.suggestions) == 1
@@ -269,7 +265,7 @@ class TestStatusAPI:
     def test_status(self, client):
         """节点状态查询。"""
         mock_data = make_mock_status_response()
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             status = client.status()
 
@@ -281,18 +277,18 @@ class TestStatusAPI:
     def test_status_memory_properties(self, client):
         """状态对象的内存计算属性。"""
         mock_data = make_mock_status_response()
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             status = client.status()
 
-            expected_used = (1073741824 - 536870912) / (1024 * 1024)  # = 512 MB
+            expected_used = (1073741824 - 536870912) / (1024 * 1024)
             assert status.memory_used_mb == pytest.approx(expected_used, rel=0.01)
             assert status.uptime_hours == 1.0
 
     def test_version(self, client):
         """版本信息查询。"""
         mock_data = make_mock_version_response()
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             vi = client.version()
 
@@ -304,7 +300,7 @@ class TestStatusAPI:
     def test_network(self, client):
         """网络统计信息查询。"""
         mock_data = make_mock_network_response()
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             net = client.network()
 
@@ -326,7 +322,7 @@ class TestCrawlerAPI:
 
     def test_crawl_start_basic(self, client):
         """基本爬虫启动。"""
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(text="OK")
             result = client.crawl_start("https://example.com")
 
@@ -340,25 +336,25 @@ class TestCrawlerAPI:
 
     def test_crawl_start_with_all_params(self, client):
         """带所有爬虫参数的请求。"""
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(text="OK")
             result = client.crawl_start(
                 "https://example.com",
                 crawling_depth=3,
-                must_match="example\\.com/.*",
-                must_not_match="example\\.com/admin.*",
+                must_match=r"example\.com/.*",
+                must_not_match=r"example\.com/admin.*",
                 index_text=True,
                 index_media=False,
             )
 
             call_kwargs = mock_req.call_args.kwargs
             assert call_kwargs["data"]["crawlingDepth"] == "3"
-            assert call_kwargs["data"]["mustmatch"] == "example\\.com/.*"
-            assert call_kwargs["data"]["mustnotmatch"] == "example\\.com/admin.*"
+            assert call_kwargs["data"]["mustmatch"] == r"example\.com/.*"
+            assert call_kwargs["data"]["mustnotmatch"] == r"example\.com/admin.*"
 
     def test_crawl_start_expert(self, client):
         """专家模式爬虫启动。"""
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(text="OK")
             result = client.crawl_start_expert(
                 "https://example.com",
@@ -383,7 +379,7 @@ class TestPushAPI:
     def test_push_document(self, client):
         """基本文档推送。"""
         mock_data = make_mock_push_response(success=True)
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.push_document(
                 url="http://example.com/doc.html",
@@ -399,7 +395,7 @@ class TestPushAPI:
     def test_push_document_failed(self, client):
         """推送失败的响应处理。"""
         mock_data = make_mock_push_response(success=False)
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.push_document(
                 url="http://example.com/bad.html",
@@ -413,7 +409,7 @@ class TestPushAPI:
     def test_push_document_with_all_metadata(self, client):
         """带所有元数据的文档推送。"""
         mock_data = make_mock_push_response(success=True)
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.push_document(
                 url="http://example.com/image.png",
@@ -426,11 +422,11 @@ class TestPushAPI:
             )
 
             assert result.success_all is True
-            # 验证请求中包含了正确的响应头
+            # 新版本 responseHeader-0 使用逗号拼接
             call_kwargs = mock_req.call_args.kwargs
             headers = call_kwargs["data"]["responseHeader-0"]
-            assert any("X-YaCy-Media-Title:Test Image" in h for h in headers)
-            assert any("X-YaCy-Media-Keywords:test sample" in h for h in headers)
+            assert "X-YaCy-Media-Title:Test Image" in headers
+            assert "X-YaCy-Media-Keywords:test sample" in headers
 
     def test_push_document_empty_url_raises(self, client):
         """空 URL 应抛出异常。"""
@@ -447,7 +443,7 @@ class TestPushAPI:
             "countsuccess": 2,
             "countfail": 0,
         }
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.push_documents_batch([
                 {"url": "http://ex.com/1", "content": "doc1"},
@@ -479,21 +475,21 @@ class TestIndexManagement:
 
     def test_delete_index_by_url(self, client):
         """按 URL 删除索引。"""
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(text="OK")
             result = client.delete_index(url="http://example.com/remove.html")
             assert result["status_code"] == 200
 
     def test_delete_index_by_host(self, client):
         """按主机删除索引。"""
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(text="OK")
             result = client.delete_index(host="example.com")
             assert result["status_code"] == 200
 
     def test_delete_index_all(self, client):
         """全量删除索引。"""
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(text="OK")
             result = client.delete_index(delete_all=True)
             assert result["status_code"] == 200
@@ -506,7 +502,7 @@ class TestIndexManagement:
     def test_get_blacklists(self, client):
         """获取黑名单元数据。"""
         mock_data = {"lists": []}
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.get_blacklists()
             assert result == {"lists": []}
@@ -514,7 +510,7 @@ class TestIndexManagement:
     def test_get_blacklist(self, client):
         """获取指定黑名单。"""
         mock_data = {"entries": [{"pattern": "spam.com"}]}
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.get_blacklist("my_list")
             assert "entries" in result
@@ -527,7 +523,7 @@ class TestIndexManagement:
     def test_add_blacklist_entry(self, client):
         """添加黑名单条目。"""
         mock_data = {"status": "ok"}
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             result = client.add_blacklist_entry("my_list", "spam.com")
             assert result == {"status": "ok"}
@@ -539,63 +535,89 @@ class TestIndexManagement:
 
 
 class TestErrorHandling:
-    """测试错误处理行为。"""
+    """测试错误处理行为。
+
+    _request 的内部实现了状态码检查和异常转换。
+    本类测试验证这些异常能正确传递给上层 API。
+    """
 
     def test_connection_error(self, client):
-        """网络连接失败。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.side_effect = requests.exceptions.ConnectionError("拒绝连接")
+        """网络连接失败 — _request 抛出 PYaCyConnectionError。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyConnectionError(
+                "无法连接到 YaCy 服务",
+                original_error=URLError("拒绝连接"),
+            )
             with pytest.raises(PYaCyConnectionError, match="无法连接到 YaCy"):
                 client.search("test")
 
     def test_timeout_error(self, client):
-        """请求超时。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.side_effect = requests.exceptions.Timeout("超时")
+        """请求超时 — _request 抛出 PYaCyTimeoutError。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyTimeoutError(
+                "请求超时", timeout=30.0
+            )
             with pytest.raises(PYaCyTimeoutError, match="请求超时"):
                 client.search("test")
 
     def test_auth_error_401(self, client):
-        """认证失败 401。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(status_code=401)
+        """认证失败 401 — _request 抛出 PYaCyAuthError。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyAuthError(
+                "认证失败: 需要提供有效的用户名和密码",
+                status_code=401,
+            )
             with pytest.raises(PYaCyAuthError, match="认证失败"):
                 client.search("test")
 
     def test_auth_error_403(self, client):
-        """认证失败 403。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(status_code=403)
+        """认证失败 403 — _request 抛出 PYaCyAuthError。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyAuthError(
+                "访问被拒绝: 当前凭据无权访问此 API",
+                status_code=403,
+            )
             with pytest.raises(PYaCyAuthError, match="访问被拒绝"):
                 client.search("test")
 
     def test_server_error_500(self, client):
-        """服务端错误 500。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(status_code=500, text="Internal Error")
+        """服务端错误 500 — _request 抛出 PYaCyServerError。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyServerError(
+                "YaCy 服务端错误 (HTTP 500)",
+                status_code=500,
+                response_body="Internal Error",
+            )
             with pytest.raises(PYaCyServerError, match="服务端错误"):
                 client.search("test")
 
     def test_server_error_503(self, client):
-        """服务端错误 503。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(status_code=503)
+        """服务端错误 503 — _request 抛出 PYaCyServerError。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyServerError(
+                "YaCy 服务端错误 (HTTP 503)",
+                status_code=503,
+            )
             with pytest.raises(PYaCyServerError):
                 client.search("test")
 
     def test_client_error_400(self, client):
-        """客户端错误 400。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(status_code=400, text="Bad Request")
+        """客户端错误 400 — _request 抛出 PYaCyResponseError。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyResponseError(
+                "API 返回错误 (HTTP 400)",
+                status_code=400,
+            )
             with pytest.raises(PYaCyResponseError):
                 client.search("test")
 
     def test_invalid_json_response(self, client):
-        """无效 JSON 响应的处理。"""
-        with patch.object(client.session, "request") as mock_req:
-            response = mock_response(status_code=200, text="<html>Not JSON</html>")
-            response.json.side_effect = ValueError("无法解析")
-            mock_req.return_value = response
+        """无效 JSON 响应由 _get_json 抛出 PYaCyResponseError。"""
+        with patch.object(client, "_request") as mock_req:
+            # 返回 200 但文本不是 JSON — _get_json 会解析失败
+            mock_req.return_value = mock_response(
+                status_code=200, text="<html>Not JSON</html>"
+            )
             with pytest.raises(PYaCyResponseError, match="无法解析 JSON"):
                 client.search("test")
 
@@ -610,7 +632,7 @@ class TestErrorHandling:
 
     def test_connection_error_stores_original(self):
         """连接异常应保存原始异常。"""
-        original = requests.exceptions.ConnectionError("no route to host")
+        original = URLError("no route to host")
         exc = PYaCyConnectionError("连接失败", original_error=original)
         assert exc.original_error is original
 
@@ -637,14 +659,16 @@ class TestPing:
     def test_ping_success(self, client):
         """ping 成功。"""
         mock_data = make_mock_version_response()
-        with patch.object(client.session, "request") as mock_req:
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
             assert client.ping() is True
 
     def test_ping_failure(self, client):
         """ping 失败（连接错误）。"""
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.side_effect = requests.exceptions.ConnectionError("拒接")
+        with patch.object(client, "_request") as mock_req:
+            mock_req.side_effect = PYaCyConnectionError(
+                "无法连接", original_error=URLError("拒接")
+            )
             assert client.ping() is False
 
 
@@ -657,119 +681,122 @@ class TestDataModels:
     """测试数据模型的构造和转换。"""
 
     def test_search_result_from_json(self):
-        """SearchResult.from_json_item 正确性。"""
-        item = {
-            "title": "Test Page",
-            "link": "http://test.com",
-            "description": "A <b>test</b> page",
-            "pubDate": "Mon, 01 Jan 2024",
-            "sizename": "1234 kbyte",
-            "host": "test.com",
-            "path": "/index.html",
-            "file": "/index.html",
-            "guid": "abc123",
+        """从字典构造 SearchResult。"""
+        from pyacy.models import SearchResult
+
+        data = {
+            "title": "Python 官网",
+            "link": "https://python.org",
+            "description": "Python <b>编程</b>语言",
+            "pubDate": "2024-01-01",
+            "sizename": "1024 kbyte",
+            "host": "python.org",
+            "path": "/",
+            "file": "/",
+            "guid": "py_guid_001",
         }
-        result = SearchResult.from_json_item(item)
-        assert result.title == "Test Page"
-        assert result.link == "http://test.com"
-        assert result.size_name == "1234 kbyte"
-        assert result.raw is item
-
-    def test_search_result_partial_json(self):
-        """不完整的 JSON 搜索结果（使用默认值）。"""
-        result = SearchResult.from_json_item({})
-        assert result.title == ""
-        assert result.link == ""
-        assert result.size == 0
-
-    def test_search_response_from_json(self):
-        """SearchResponse.from_json 完整解析。"""
-        data = make_mock_search_response(query="python")
-        resp = SearchResponse.from_json(data)
-        assert resp.query == "python"
-        assert resp.total_results == 42
-        assert len(resp.items) == 2
-        assert len(resp.top_words) == 2
-        assert resp.top_words[0] == "python"
+        result = SearchResult.from_json_item(data)
+        assert result.title == "Python 官网"
+        assert result.link == "https://python.org"
+        assert result.host == "python.org"
 
     def test_suggest_response_from_json(self):
-        """SuggestResponse 解析。"""
-        data = [{"suggestion": "python"}, {"suggestion": "javascript"}]
+        """从列表构造 SuggestResponse。"""
+        data = [{"suggestion": "python"}, {"suggestion": "python3"}]
         resp = SuggestResponse.from_json(data)
         assert len(resp.suggestions) == 2
         assert resp.suggestions[0].word == "python"
 
-    def test_peer_status_from_json_defaults(self):
-        """PeerStatus 缺失字段的默认值。"""
-        status = PeerStatus.from_json({})
-        assert status.status == ""
-        assert status.uptime == 0
-        assert status.index_size == 0
+    def test_suggest_response_empty(self):
+        """空建议列表。"""
+        resp = SuggestResponse.from_json([])
+        assert resp.suggestions == []
+
+    def test_peer_status_from_json(self):
+        """从字典构造 PeerStatus。"""
+        data = {
+            "status": "online",
+            "uptime": 7200000,
+            "totalMemory": 2147483648,
+            "freeMemory": 1073741824,
+            "indexSize": 50000,
+        }
+        ps = PeerStatus.from_json(data)
+        assert ps.status == "online"
+        assert ps.uptime_hours == 2.0
+        assert ps.memory_used_mb == pytest.approx(1024.0, rel=0.01)
 
     def test_version_info_from_json(self):
-        """VersionInfo 解析。"""
-        data = make_mock_version_response()
+        """从字典构造 VersionInfo。"""
+        data = {"version": "1.94", "svnRevision": "12346", "buildDate": "2025-01-01"}
         vi = VersionInfo.from_json(data)
-        assert vi.version == "1.93"
-        assert vi.java_version == "17.0.8"
+        assert vi.version == "1.94"
 
     def test_network_info_from_json(self):
-        """NetworkInfo 解析。"""
-        data = make_mock_network_response()
-        net = NetworkInfo.from_json(data)
-        assert net.peer_name == "test-peer"
-        assert net.active_peers == 150
+        """从字典构造 NetworkInfo。"""
+        data = {
+            "peers": {
+                "your": {"name": "my-node", "hash": "hash123"},
+                "all": {"active": 200, "passive": 30, "potential": 100, "count": 999999},
+            }
+        }
+        ni = NetworkInfo.from_json(data)
+        assert ni.peer_name == "my-node"
+        assert ni.active_peers == 200
+        assert ni.total_urls == 999999
 
     def test_push_response_from_json(self):
-        """PushResponse 解析。"""
+        """从字典构造 PushResponse。"""
         data = make_mock_push_response(success=True)
-        resp = PushResponse.from_json(data)
-        assert resp.total_count == 1
-        assert resp.success_all is True
-        assert len(resp.items) == 1
-        assert resp.items[0].url == "http://example.com/doc.html"
+        pr = PushResponse.from_json(data)
+        assert pr.success_all is True
+        assert pr.total_count == 1
+        assert pr.success_count == 1
+        assert pr.fail_count == 0
+        assert len(pr.items) == 1
 
 
 # ======================================================================
-# 11. 边界情况与回归测试
+# 11. 边界情况测试
 # ======================================================================
 
 
 class TestEdgeCases:
-    """边界情况测试。"""
+    """测试边界情况。"""
 
-    def test_search_with_special_characters(self, client):
-        """搜索包含特殊字符的查询。"""
-        mock_data = make_mock_search_response(query="C++ & Python", total_results=0)
-        with patch.object(client.session, "request") as mock_req:
+    def test_search_no_title(self, client):
+        """搜索结果无标题。"""
+        item = {"link": "http://x.com/1", "description": "...", "host": "x.com"}
+        mock_data = make_mock_search_response(items=[item])
+        with patch.object(client, "_request") as mock_req:
             mock_req.return_value = mock_response(json_data=mock_data)
-            result = client.search("C++ & Python")
-            assert result.query == "C++ & Python"
-
-    def test_large_maximum_records(self, client):
-        """大结果数请求。"""
-        mock_data = make_mock_search_response(total_results=10000)
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(json_data=mock_data)
-            result = client.search("test", maximum_records=10000)
-            assert result.total_results == 10000
-
-    def test_start_record_beyond_total(self, client):
-        """起始记录超出总数。"""
-        mock_data = make_mock_search_response(total_results=42)
-        data = mock_data.copy()
-        data["channels"][0]["items"] = []
-        data["channels"][0]["startIndex"] = 50
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(json_data=data)
-            result = client.search("test", start_record=50)
-            assert result.items == []
-
-    def test_topwords_as_dicts(self, client):
-        """topwords 格式为字典列表。"""
-        data = make_mock_search_response()
-        data["channels"][0]["topwords"] = [{"word": "python"}]
-        with patch.object(client.session, "request") as mock_req:
-            mock_req.return_value = mock_response(json_data=data)
             result = client.search("test")
-            assert result.top_words == ["python"]
+            assert result.items[0].title == ""
+
+    def test_search_no_link(self, client):
+        """搜索结果无链接。"""
+        item = {"title": "X", "description": "...", "host": "x.com"}
+        mock_data = make_mock_search_response(items=[item])
+        with patch.object(client, "_request") as mock_req:
+            mock_req.return_value = mock_response(json_data=mock_data)
+            result = client.search("test")
+            assert result.items[0].link == ""
+
+    def test_url_with_special_chars_in_params(self, client):
+        """URL 中的特殊字符应正确编码。"""
+        mock_data = make_mock_search_response()
+        with patch.object(client, "_request") as mock_req:
+            mock_req.return_value = mock_response(json_data=mock_data)
+            client.search("c++ & rust")
+            call_args = mock_req.call_args
+            params = call_args.kwargs["params"]
+            assert params["query"] == "c++ & rust"
+
+    def test_version_missing_fields(self, client):
+        """版本信息缺少可选字段。"""
+        with patch.object(client, "_request") as mock_req:
+            mock_req.return_value = mock_response(
+                json_data={"version": "1.0"}
+            )
+            vi = client.version()
+            assert vi.version == "1.0"

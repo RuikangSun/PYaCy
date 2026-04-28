@@ -2,7 +2,7 @@
 """PYaCy 测试配置与共享夹具。
 
 本模块提供 pytest 测试用例的共享配置，包括：
-- 模拟 YaCy 服务器的 HTTP mock fixtures
+- 模拟 YaCy 服务器的 HTTP 响应 fixtures
 - 客户端实例的 fixture
 - 测试数据的常量定义
 """
@@ -15,6 +15,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import socket
+from urllib.error import URLError
 
 # 确保 src 目录在 Python 路径中
 _SRC_DIR = str(Path(__file__).parent.parent / "src")
@@ -88,14 +90,7 @@ def make_mock_search_response(
 def make_mock_suggest_response(
     queries: list[str] | None = None,
 ) -> list[dict[str, str]]:
-    """构建模拟的搜索建议响应。
-
-    Args:
-        queries: 建议词列表。
-
-    Returns:
-        符合 YaCy suggest.json 格式的列表。
-    """
+    """构建模拟的搜索建议响应。"""
     if queries is None:
         queries = ["python", "python tutorial", "python download"]
     return [{"suggestion": q} for q in queries]
@@ -105,9 +100,9 @@ def make_mock_status_response() -> dict[str, Any]:
     """构建模拟的节点状态响应。"""
     return {
         "status": "running",
-        "uptime": 3600000,  # 1 小时 (毫秒)
-        "totalMemory": 1073741824,  # 1 GB
-        "freeMemory": 536870912,  # 512 MB
+        "uptime": 3600000,
+        "totalMemory": 1073741824,
+        "freeMemory": 536870912,
         "indexSize": 12345,
         "crawlsActive": 2,
     }
@@ -127,16 +122,8 @@ def make_mock_network_response() -> dict[str, Any]:
     """构建模拟的网络统计响应。"""
     return {
         "peers": {
-            "your": {
-                "name": "test-peer",
-                "hash": "abc123hash",
-            },
-            "all": {
-                "active": 150,
-                "passive": 50,
-                "potential": 200,
-                "count": 123456789,
-            },
+            "your": {"name": "test-peer", "hash": "abc123hash"},
+            "all": {"active": 150, "passive": 50, "potential": 200, "count": 123456789},
         }
     }
 
@@ -166,12 +153,13 @@ def make_mock_push_response(success: bool = True) -> dict[str, Any]:
 def client():
     """提供一个模拟的客户端实例（不实际连接）。"""
     from pyacy import YaCyClient
+
     return YaCyClient(base_url=TEST_BASE_URL)
 
 
 @pytest.fixture
-def mock_session() -> MagicMock:
-    """提供一个模拟的 requests.Session。"""
+def mock_session():
+    """提供一个模拟的 Open Director（兼容旧测试命名）。"""
     return MagicMock()
 
 
@@ -179,25 +167,20 @@ def mock_response(
     json_data: Any = None,
     status_code: int = 200,
     text: str = "",
-    content: bytes = b"",
 ) -> MagicMock:
-    """创建模拟的 requests.Response 对象。
+    """创建模拟的 ``_HttpResponse`` 对象。
 
     Args:
         json_data: 模拟的 JSON 响应数据。
         status_code: HTTP 状态码。
         text: 响应文本。
-        content: 响应二进制内容。
 
     Returns:
-        模拟的 Response 对象。
+        模拟的 _HttpResponse 对象。
     """
-    response = MagicMock()
-    response.status_code = status_code
-    response.text = text
-    response.content = content
+    from pyacy.client import _HttpResponse
+
     if json_data is not None:
-        response.json.return_value = json_data
-    else:
-        response.json.return_value = {}
-    return response
+        text = json.dumps(json_data, ensure_ascii=False)
+    resp = _HttpResponse(status_code=status_code, text=text, headers={})
+    return resp

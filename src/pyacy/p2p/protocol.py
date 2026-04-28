@@ -185,7 +185,7 @@ class P2PProtocol:
         headers = {
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body)),
-            "User-Agent": "PYaCy/0.2.3 (Python YaCy P2P Client)",
+            "User-Agent": "PYaCy/0.2.4 (Python YaCy P2P Client)",
             "Accept": "*/*",
             "Connection": "close",
         }
@@ -412,7 +412,7 @@ class P2PProtocol:
         # 优先尝试 JSON
         json_url = f"{target_url.rstrip('/')}/yacy/seedlist.json"
         try:
-            req = Request(json_url, headers={"User-Agent": "PYaCy/0.2.3"})
+            req = Request(json_url, headers={"User-Agent": "PYaCy/0.2.4"})
             with urlopen(req, timeout=self.timeout) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
             return data
