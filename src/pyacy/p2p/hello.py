@@ -69,10 +69,17 @@ class HelloResult:
             HelloResult 实例。
         """
         data = response.data
-        message = data.get("message", "")
+        message = data.get("message", data.get("__status__", ""))
 
-        # 检查是否成功
-        success = message.startswith("ok")
+        # 检查是否成功: message 以 "ok" 开头，或 __status__ 以 "ok" 开头
+        # YaCy Hello 响应有两种格式：
+        #   - message=ok 263     (标准 key=value 格式)
+        #   - ok 263             (纯状态行，无 "=" 号)
+        raw_first_line = response.raw.strip().split("\n")[0].strip() if response.raw else ""
+        success = (
+            message.startswith("ok")
+            or raw_first_line.startswith("ok")
+        )
 
         # 提取 our type
         your_type = data.get(SeedKeys.YOURTYPE, PEERTYPE_JUNIOR)

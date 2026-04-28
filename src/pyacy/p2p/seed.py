@@ -160,7 +160,7 @@ class Seed:
             SeedKeys.PORT: str(port),
             SeedKeys.IP: "",
             SeedKeys.IP6: "",
-            SeedKeys.VERSION: "0.2.2",
+            SeedKeys.VERSION: "0.2.3",
             SeedKeys.FLAGS: "    ",
             SeedKeys.ISPEED: "0",
             SeedKeys.RSPEED: "0",
@@ -395,18 +395,20 @@ class Seed:
     # 种子字符串
     # ------------------------------------------------------------------
 
-    def to_seed_string(self, *, salt: str = "", compress: bool = True) -> str:
+    def to_seed_string(self, *, salt: str = "", compress: bool = False) -> str:
         """将 Seed 导出为 YaCy 种子字符串。
+
+        **重要**: P2P 通信默认使用未压缩格式（``p|{...}``），
+        因为 Python ``gzip.compress()`` 与 Java ``GZIPInputStream`` 不兼容，
+        压缩后的种子会导致 YaCy 服务器返回 ``bad seed: seed == null``。
 
         Args:
             salt: 加密盐（用于安全传输）。
-            compress: 是否使用 gzip 压缩。
+            compress: 是否使用 gzip 压缩。默认 False（P2P 兼容模式）。
 
         Returns:
             编码后的种子字符串。
         """
-        # Java 版本中 genSeedStr 使用 salt 做简单编码
-        # 这里保留 salt 参数用于后续安全编码
         return encode_seed_string(self.dna, compress=compress)
 
     # ------------------------------------------------------------------

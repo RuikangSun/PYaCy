@@ -54,7 +54,12 @@ class P2PResponse:
         self._parse()
 
     def _parse(self) -> None:
-        """解析 key=value 行。"""
+        """解析 key=value 行。
+
+        第一行若不包含 ``=``，视为状态行存入 ``data["__status__"]``。
+        例如 YaCy 某些端点返回 ``ok 263`` 作为首行状态码。
+        """
+        first = True
         for line in self.raw.splitlines():
             line = line.strip()
             if not line:
@@ -64,6 +69,11 @@ class P2PResponse:
                 key = line[:eq_pos].strip()
                 value = line[eq_pos + 1:]
                 self.data[key] = value
+            elif first and eq_pos == -1:
+                # 第一行没有 "=" — 视为状态行
+                self.data["__status__"] = line
+                self.data["message"] = line
+            first = False
 
     def get(self, key: str, default: str = "") -> str:
         """获取响应字段值。
@@ -175,7 +185,7 @@ class P2PProtocol:
         headers = {
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body)),
-            "User-Agent": "PYaCy/0.2.2 (Python YaCy P2P Client)",
+            "User-Agent": "PYaCy/0.2.3 (Python YaCy P2P Client)",
             "Accept": "*/*",
             "Connection": "close",
         }
@@ -402,7 +412,7 @@ class P2PProtocol:
         # 优先尝试 JSON
         json_url = f"{target_url.rstrip('/')}/yacy/seedlist.json"
         try:
-            req = Request(json_url, headers={"User-Agent": "PYaCy/0.2.2"})
+            req = Request(json_url, headers={"User-Agent": "PYaCy/0.2.3"})
             with urlopen(req, timeout=self.timeout) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
             return data
