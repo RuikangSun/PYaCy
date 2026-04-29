@@ -6,9 +6,9 @@ description: >
   关键词触发: 爬虫、抓取、索引、crawl、爬取、收录、索引管理、黑名单。
 license: MIT
 compatibility: >
-  Python 3.9+, PYaCy>=0.2.3, 本地运行 YaCy 服务 (http://localhost:8090)。
+  Python 3.9+, PYaCy>=0.3.1, 本地运行 YaCy 服务 (http://localhost:8090)。
   爬虫功能需要 YaCy 服务器端支持，属于 HTTP 客户端功能。
-  PYaCy 仓库: https://github.com/pyacy/pyacy
+  PYaCy 仓库: https://github.com/RuikangSun/PYaCy
 metadata:
   level: 0
   category: crawler

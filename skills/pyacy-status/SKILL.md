@@ -4,7 +4,7 @@ description: >
   查询 YaCy 节点运行状态、P2P 网络连接信息和索引统计。
   当用户询问"节点状态"、"网络状态"、"YaCy 是否在线"、"索引数量"、"P2P 连接数"时使用此技能。
 license: MIT
-compatibility: Python 3.9+, PYaCy>=0.2.0
+compatibility: Python 3.9+, PYaCy>=0.3.1
 metadata:
   category: monitoring
   requires_local_yacy: partial

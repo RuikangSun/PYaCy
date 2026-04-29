@@ -32,18 +32,24 @@ from .p2p.seed import (
     PEERTYPE_PRINCIPAL,
     Seed,
 )
+from .p2p.seeds import (
+    build_seed_list,
+    save_seed_cache,
+    probe_seeds,
+    fetch_online_seeds,
+)
 
 #: 日志记录器
 _logger = logging.getLogger(__name__)
 
 #: 已知的 YaCy Public Seed 节点（2026 年维护列表）。
 #: 这些节点为 freeworld 网络中的稳定 Principal/Senior 节点。
+#:
+#: 注意: 实际种子管理已迁移到 ``pyacy.p2p.seeds`` 模块，
+#: 使用 ``build_seed_list()`` 函数获取三层冗余的种子列表。
+#: 此常量仅作为向后兼容保留。
 DEFAULT_SEED_URLS: list[str] = [
     "http://yacy.searchlab.eu:8090",
-    "http://yacy.dyndns.org:8090",
-    "http://130.255.73.69:8090",
-    "http://suen.ddns.net:8090",
-    "http://77.87.48.15:8090",
 ]
 
 
@@ -174,47 +180,109 @@ class PYaCyNode:
         seed_urls: list[str] | None = None,
         max_peers: int = 100,
         rounds: int = 2,
+        probe_timeout: float = 5.0,
     ) -> bool:
         """引导节点接入 P2P 网络。
 
-        引导流程：
-        1. 从种子 URL 获取 seedlist（已知节点列表）
-        2. 向部分节点发送 Hello 请求
-        3. 从 Hello 响应中提取更多节点信息
-        4. 重复直到达到目标数量或无法发现新节点
+        引导流程（v0.3.0 重写）：
+        1. 使用 ``build_seed_list()`` 从三层来源获取候选种子
+            （用户指定 → 本地缓存 → 硬编码种子）
+        2. 并行探测候选种子的连通性
+        3. 从可达种子获取 seedlist → 发现全部在线节点
+        4. 向部分节点发送 Hello 请求（可选轮数）
+        5. 将发现的节点持久化到本地缓存
 
         Args:
             seed_urls: 自定义种子节点 URL（覆盖默认值）。
             max_peers: 最大发现节点数。
-            rounds: 发现轮数。
+            rounds: 节点发现轮数（Hello 扩展）。
+            probe_timeout: 种子探测超时（秒）。
 
         Returns:
             True 如果至少连接到一个节点。
         """
-        urls = seed_urls or self._seed_urls
-        _logger.info("开始网络引导，种子节点: %d 个", len(urls))
+        # 第一阶段：种子探测
+        _logger.info("开始网络引导（v0.3.0 种子探测模式）...")
 
+        # 准备候选种子
+        custom_seeds: list[Seed] | None = None
+        if seed_urls:
+            custom_seeds = []
+            for url in seed_urls:
+                try:
+                    s = Seed.create_junior(name=f"seed-{len(custom_seeds)}")
+                    s.dna[SeedKeys.IP] = url.split("://")[1].split(":")[0] if "://" in url else url
+                    s.dna[SeedKeys.PORT] = url.rsplit(":", 1)[1] if ":" in url.rsplit("://", 1)[-1] else "8090"
+                    custom_seeds.append(s)
+                except Exception:
+                    pass
+
+        # 使用种子管理系统获取可达种子
         try:
-            discovered = self._hello.discover_network(
-                seed_urls=urls,
-                my_seed=self._my_seed,
-                max_peers=max_peers,
-                rounds=rounds,
+            reachable_seeds = build_seed_list(
+                custom_seeds=custom_seeds,
+                probe=True,
+                probe_timeout=probe_timeout,
             )
         except Exception as exc:
-            _logger.error("网络引导失败: %s", exc)
+            _logger.error("种子探测异常: %s", exc)
             self._is_bootstrapped = False
             return False
 
-        # 存储发现的节点
+        if not reachable_seeds:
+            _logger.error("种子探测失败: 无可用种子节点")
+            self._is_bootstrapped = False
+            return False
+
+        _logger.info("种子探测完成: %d 个可达种子", len(reachable_seeds))
+
+        # 第二阶段：从可达种子获取在线节点列表
+        entry_urls = [s.base_url for s in reachable_seeds if s.base_url]
+        entry_urls = [u for u in entry_urls if u]  # type narrowing
+
+        online_seeds = fetch_online_seeds(entry_urls, timeout=probe_timeout)
+        if online_seeds:
+            _logger.info("在线发现 %d 个节点", len(online_seeds))
+        else:
+            # 在线获取失败时，直接使用可达种子
+            online_seeds = list(reachable_seeds)
+            _logger.info("在线获取失败，使用可达种子池: %d 个", len(online_seeds))
+
+        # 将发现的节点加入已知列表
         new_count = 0
-        for seed in discovered:
+        for seed in online_seeds:
             if seed.hash != self.hash and seed.hash not in self._peers:
                 self._peers[seed.hash] = seed
                 new_count += 1
 
+        # 第三阶段（可选）：Hello 扩展（在已发现的 Senior 节点间扩散）
+        if rounds > 1 and new_count > 0:
+            try:
+                # 取可达种子 URL 作为发现入口
+                seed_url_list = [s.base_url for s in reachable_seeds[:5] if s.base_url]
+                more_discovered = self._hello.discover_network(
+                    seed_urls=seed_url_list,
+                    my_seed=self._my_seed,
+                    max_peers=max_peers,
+                    rounds=rounds - 1,
+                )
+                for seed in more_discovered:
+                    if seed.hash != self.hash and seed.hash not in self._peers:
+                        self._peers[seed.hash] = seed
+                        new_count += 1
+                _logger.info("Hello 扩展: 额外发现 %d 个节点", len(more_discovered))
+            except Exception as exc:
+                _logger.debug("Hello 扩展跳过: %s", exc)
+
         self._is_bootstrapped = len(self._peers) > 0
         self._bootstrap_time = time.time()
+
+        # 持久化种子缓存
+        if self._is_bootstrapped:
+            try:
+                save_seed_cache(list(self._peers.values()))
+            except Exception as exc:
+                _logger.debug("种子缓存保存失败: %s", exc)
 
         _logger.info(
             "网络引导完成: 发现 %d 个新节点（共 %d 个），%d 个 Senior",
@@ -302,20 +370,22 @@ class PYaCyNode:
         query: str,
         *,
         count: int = 20,
-        max_peers: int = 5,
+        max_peers: int = 20,
+        iterative: bool = True,
         language: str = "",
         exclude_words: list[str] | None = None,
         **kwargs: Any,
     ) -> DHTSearchResult:
-        """执行 DHT 全文搜索。
+        """执行 DHT 全文搜索（v0.3.0：哈希路由）。
 
-        自动从已知节点池中筛选可连接的 Senior 节点，
-        并发送 DHT 搜索请求。
+        使用 DHT 哈希路由选择负责节点，而非随机选取。
+        若首轮无结果，自动扩大搜索范围（迭代扩展）。
 
         Args:
             query: 搜索查询字符串。
             count: 期望结果数（默认 20）。
-            max_peers: 最多搜索的节点数（默认 5）。
+            max_peers: 每轮最多搜索的节点数（默认 20，v0.2.x 为 5）。
+            iterative: 是否启用迭代扩展（默认 True）。
             language: 语言过滤（如 "zh", "en"）。
             exclude_words: 排除词列表。
             **kwargs: 其他搜索参数。
@@ -337,6 +407,7 @@ class PYaCyNode:
             query=query,
             count=count,
             max_peers=max_peers,
+            iterative=iterative,
             language=language,
             exclude_words=exclude_words,
             **kwargs,

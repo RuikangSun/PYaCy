@@ -29,7 +29,7 @@ try:
     from importlib.metadata import version as _pkg_version
     _VERSION = _pkg_version("pyacy")
 except Exception:
-    _VERSION = "0.2.5"  # fallback：与 pyproject.toml 保持同步
+    _VERSION = "0.3.1"  # fallback：与 pyproject.toml 保持同步
 
 
 # ---------------------------------------------------------------------------
@@ -387,15 +387,32 @@ class Seed:
     def is_reachable(self) -> bool:
         """判断节点是否可被连接。
 
-        Junior 节点默认不可被主动连接。
+        如果之前通过 ``set_reachable()`` 显式设置了可达性，
+        优先使用该标记。否则根据节点类型和网络地址推断。
+
+        Junior/Virgin 节点默认不可被主动连接。
         Senior/Principal 节点若有 IP 和端口则可连接。
 
         Returns:
             True 如果节点可被连接。
         """
+        # 显式覆盖优先
+        if hasattr(self, "_reachable_flag"):
+            return self._reachable_flag
+        # 类型推断
         if self.is_junior() or self.is_virgin():
             return False
         return self.base_url is not None
+
+    def set_reachable(self, reachable: bool) -> None:
+        """显式设置节点可达性标记。
+
+        此标记会覆盖 ``is_reachable`` 属性的默认类型推断行为。
+
+        Args:
+            reachable: True 表示节点可达，False 表示不可达。
+        """
+        self._reachable_flag: bool = reachable
 
     # ------------------------------------------------------------------
     # 种子字符串

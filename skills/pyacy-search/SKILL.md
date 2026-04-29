@@ -7,8 +7,8 @@ description: >
   关键词触发: 搜索、查找、检索、search、网页搜索、P2P搜索、分布式搜索。
 license: MIT
 compatibility: >
-  Python 3.9+, PYaCy>=0.2.3 (pip install pyacy), 无需公网 IP (Junior 模式)。
-  PYaCy 仓库: https://github.com/pyacy/pyacy
+  Python 3.9+, PYaCy>=0.3.1 (pip install pyacy), 无需公网 IP (Junior 模式)。
+  PYaCy 仓库: https://github.com/RuikangSun/PYaCy
 metadata:
   level: 2
   category: search
@@ -81,11 +81,15 @@ for ref in result.references:
 
 `DHTSearchResult` 包含:
 - `success`: 搜索是否成功
-- `references`: DHTReference 列表（url_hash, title, description, url, ranking）
+- `references`: DHTReference 列表（url_hash, title, description, url, size, word_count, last_modified, language, ranking）
 - `links`: 纯 URL 字符串列表
 - `link_count`: 总链接数
 - `join_count`: 参与搜索的 P2P 节点数
 - `search_time_ms`: 搜索耗时
+- `index_counts`: 各节点索引数量字典（v0.3.1 新增）
+
+**v0.3.1 改进**: 正确解析 `resourceN` 字段（含 SimpleCoding 编码值 `b|`/`p|` 前缀），
+同时保持对旧版 `linkcount`/`links`/`references` 格式的向后兼容。
 
 **重要**: 如果 `references` 中的 `title` 为空，说明远端节点返回的是 RWI 引用（仅 URL 哈希），
 需要进一步获取摘要。可以在 `search()` 中添加 `abstracts=True` 参数。

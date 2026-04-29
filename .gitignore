@@ -50,6 +50,9 @@ benchmark/
 # Development reports (人机对话报告)
 reports/
 
+# 开发内部文档（版本检查清单等）
+dev/
+
 # OS
 Thumbs.db
 Desktop.ini

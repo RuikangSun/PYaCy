@@ -106,9 +106,9 @@ class TestNodeLifecycle:
         node.close()
 
     def test_create_default_seeds(self) -> None:
-        """默认种子节点列表。"""
+        """默认种子节点列表（v0.3.0: 种子管理迁移至 seeds.py）。"""
         node = PYaCyNode()
-        assert len(node._seed_urls) >= 3
+        assert len(node._seed_urls) >= 1
         assert any("searchlab" in u for u in node._seed_urls)
         node.close()
 
@@ -262,13 +262,18 @@ class TestNodePeerManagement:
 class TestNodeBootstrap:
     """PYaCyNode 引导流程测试。"""
 
+    @patch("pyacy.network.build_seed_list")
+    @patch("pyacy.network.fetch_online_seeds")
     @patch.object(HelloClient, "discover_network")
-    def test_bootstrap_success(self, mock_discover: MagicMock) -> None:
+    def test_bootstrap_success(self, mock_discover: MagicMock,
+                                mock_fetch: MagicMock,
+                                mock_build: MagicMock) -> None:
         """成功引导。"""
-        mock_discover.return_value = [
-            _make_senior_seed("Peer1"),
-            _make_senior_seed("Peer2", ip="10.0.0.2"),
-        ]
+        s1 = _make_senior_seed("Peer1")
+        s2 = _make_senior_seed("Peer2", ip="10.0.0.2")
+        mock_build.return_value = [s1, s2]
+        mock_fetch.return_value = []
+        mock_discover.return_value = []
 
         node = PYaCyNode()
         result = node.bootstrap()
@@ -277,9 +282,15 @@ class TestNodeBootstrap:
         assert node.peer_count == 2
         node.close()
 
+    @patch("pyacy.network.build_seed_list")
+    @patch("pyacy.network.fetch_online_seeds")
     @patch.object(HelloClient, "discover_network")
-    def test_bootstrap_no_peers(self, mock_discover: MagicMock) -> None:
+    def test_bootstrap_no_peers(self, mock_discover: MagicMock,
+                                 mock_fetch: MagicMock,
+                                 mock_build: MagicMock) -> None:
         """引导未发现节点。"""
+        mock_build.return_value = []
+        mock_fetch.return_value = []
         mock_discover.return_value = []
 
         node = PYaCyNode()
@@ -288,10 +299,16 @@ class TestNodeBootstrap:
         assert not node.is_bootstrapped
         node.close()
 
+    @patch("pyacy.network.build_seed_list")
+    @patch("pyacy.network.fetch_online_seeds")
     @patch.object(HelloClient, "discover_network")
-    def test_bootstrap_exception(self, mock_discover: MagicMock) -> None:
+    def test_bootstrap_exception(self, mock_discover: MagicMock,
+                                  mock_fetch: MagicMock,
+                                  mock_build: MagicMock) -> None:
         """引导过程异常。"""
-        mock_discover.side_effect = PYaCyConnectionError("网络不可达")
+        mock_build.side_effect = PYaCyConnectionError("网络不可达")
+        mock_fetch.return_value = []
+        mock_discover.return_value = []
 
         node = PYaCyNode()
         result = node.bootstrap()
@@ -562,9 +579,9 @@ class TestDHTSearchClient:
 
         client = DHTSearchClient(P2PProtocol())
         peers = [
-            _make_senior_seed("S1"),
+            _make_senior_seed("S1", hash_val="AAAAAAAAAAAA"),
             _make_junior_seed("J1"),  # 应被过滤
-            _make_senior_seed("S2", ip="10.0.0.2"),
+            _make_senior_seed("S2", ip="10.0.0.2", hash_val="CCCCCCCCCCCC"),
         ]
 
         result = client.fulltext_search(

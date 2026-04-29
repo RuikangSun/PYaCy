@@ -121,7 +121,7 @@ PYaCy/
 │   ├── dht/
 │   │   └── search.py        # DHT 搜索客户端
 │   └── network.py           # PYaCyNode 网络管理
-├── tests/                   # 测试套件（183 个测试）
+├── tests/                   # 测试套件（340 个测试）
 ├── examples/                # 使用示例
 ├── skills/                  # Agent Skills（AI 助手集成）
 ├── pyproject.toml
@@ -139,7 +139,7 @@ pytest tests/ -v
 
 # 运行示例
 python examples/basic_usage.py
-python examples/level2_p2p_search.py
+python examples/p2p_search.py
 ```
 
 ## 开发路线图
@@ -158,6 +158,8 @@ python examples/level2_p2p_search.py
 | Junior 节点支持 | v0.2.2 | 无公网 IP 环境下完整 P2P 功能 |
 | Hello 握手修复 | v0.2.3 | 未压缩种子格式兼容、握手成功率 100% |
 | 零依赖 | v0.2.4 | 移除 requests，纯标准库 urllib 实现 |
+| DHT 哈希路由 | v0.3.0 | 词哈希 XOR 距离路由、迭代搜索扩展、31 个硬编码种子 |
+| 响应解析修复 | v0.3.1 | 修复 resourceN 字段解析、SimpleCoding 解码、新旧格式兼容 |
 
 ### 🚧 进行中
 

@@ -169,6 +169,57 @@ def yacy_base64_decode(encoded: str) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# DHT 距离计算
+# ---------------------------------------------------------------------------
+
+
+def dht_distance(hash_a: str, hash_b: str) -> int:
+    """计算两个 YaCy Base64 哈希之间的 XOR 距离。
+
+    这是 DHT 哈希路由的核心度量函数。YaCy P2P 网络使用 XOR 距离
+    来确定某个词哈希应该由哪个（哪些）节点负责存储和查询。
+
+    算法:
+        1. 将两个 YaCy Base64 哈希解码为原始字节
+        2. 逐字节计算 XOR
+        3. 将结果解释为整数距离
+
+    Args:
+        hash_a: 第一个 YaCy Base64 哈希（12 字符）。
+        hash_b: 第二个 YaCy Base64 哈希（12 字符）。
+
+    Returns:
+        XOR 距离（非负整数）。距离越小表示两个哈希越接近。
+
+    Raises:
+        ValueError: 如果哈希字符串包含非法字符。
+
+    示例::
+
+        >>> dht_distance("AAAAAAAAAAAA", "AAAAAAAAAAAB")
+        1
+        >>> dht_distance("AAAAAAAAAAAA", "BAAAAAAAAAAA")
+        4611686018427387904  # 2^62
+    """
+    raw_a = yacy_base64_decode(hash_a)
+    raw_b = yacy_base64_decode(hash_b)
+
+    distance = 0
+    for a, b in zip(raw_a, raw_b):
+        distance = (distance << 8) | (a ^ b)
+
+    # 如果字节数不同，剩余字节直接附加
+    if len(raw_a) > len(raw_b):
+        for a in raw_a[len(raw_b):]:
+            distance = (distance << 8) | a
+    elif len(raw_b) > len(raw_a):
+        for b in raw_b[len(raw_a):]:
+            distance = (distance << 8) | b
+
+    return distance
+
+
+# ---------------------------------------------------------------------------
 # 种子字符串
 # ---------------------------------------------------------------------------
 
@@ -416,3 +467,143 @@ def compute_peer_hash(identity: str) -> str:
     """
     sha = hashlib.sha256(identity.encode("utf-8")).digest()
     return _bytes_to_yacy_base64(sha[:9], WORD_HASH_LENGTH)
+
+
+# ---------------------------------------------------------------------------
+# YaCy SimpleCoding 编解码
+# ---------------------------------------------------------------------------
+
+
+def simplecoding_decode(value: str) -> str:
+    """解码 YaCy SimpleCoding 格式的值。
+
+    YaCy 在搜索响应等处使用 SimpleCoding 格式传输数据：
+    - ``b|base64_data`` — Base64 编码的数据（需解码为 UTF-8 字符串）
+    - ``p|plain_text`` — 明文数据（直接返回管道后的部分）
+    - ``plain_text`` — 无前缀时视为纯文本（直接返回）
+
+    Args:
+        value: SimpleCoding 编码的字符串。
+
+    Returns:
+        解码后的字符串。
+
+    示例::
+
+        >>> simplecoding_decode("b|aGVsbG8=")
+        "hello"
+        >>> simplecoding_decode("p|world")
+        "world"
+        >>> simplecoding_decode("plain")
+        "plain"
+    """
+    if not value:
+        return ""
+
+    pipe_pos = value.find("|")
+    if pipe_pos < 0:
+        # 无管道符：视为纯文本
+        return value
+
+    prefix = value[:pipe_pos].lower()
+    data = value[pipe_pos + 1:]
+
+    if prefix == "b":
+        # Base64 编码
+        try:
+            # 使用标准 Base64 解码
+            import base64 as _b64
+            decoded = _b64.b64decode(data)
+            return decoded.decode("utf-8", errors="replace")
+        except Exception:
+            # 解码失败时返回原始数据
+            return data
+    elif prefix == "p":
+        # 明文
+        return data
+    else:
+        # 未知前缀：返回完整原始值
+        return value
+
+
+def simplecoding_decode_bytes(value: str) -> bytes:
+    """解码 YaCy SimpleCoding 值为原始字节。
+
+    与 ``simplecoding_decode`` 的区别：此函数返回 bytes 而非 str，
+    适用于需要原始二进制数据的场景。
+
+    Args:
+        value: SimpleCoding 编码的字符串。
+
+    Returns:
+        解码后的字节数据。
+    """
+    if not value:
+        return b""
+
+    pipe_pos = value.find("|")
+    if pipe_pos < 0:
+        return value.encode("utf-8")
+
+    prefix = value[:pipe_pos].lower()
+    data = value[pipe_pos + 1:]
+
+    if prefix == "b":
+        try:
+            import base64 as _b64
+            return _b64.b64decode(data)
+        except Exception:
+            return data.encode("utf-8")
+    elif prefix == "p":
+        return data.encode("utf-8")
+    else:
+        return value.encode("utf-8")
+
+
+def parse_search_resource(resource_str: str) -> dict[str, str]:
+    """解析 YaCy 搜索响应中的 resource 字段。
+
+    resource 字段格式为：
+    ``{hash=url_hash,url=b|base64_url,descr=b|base64_descr,...}``
+
+    其中值使用 SimpleCoding 编码（``b|`` 或 ``p|`` 前缀）。
+
+    Args:
+        resource_str: resource 字段值（花括号包裹）。
+
+    Returns:
+        解析后的属性字典，值已解码。
+
+    示例::
+
+        >>> parse_search_resource("{hash=abc123,url=b|aHR0cDovL2V4YW1wbGUuY29t}")
+        {"hash": "abc123", "url": "http://example.com"}
+    """
+    result: dict[str, str] = {}
+
+    if not resource_str:
+        return result
+
+    # 去除花括号
+    inner = resource_str.strip()
+    if inner.startswith("{") and inner.endswith("}"):
+        inner = inner[1:-1]
+
+    if not inner:
+        return result
+
+    # 按逗号分割键值对
+    # 注意：值中可能包含逗号（如 URL 参数），但 YaCy 使用反斜杠转义
+    pairs = _split_csv_properties(inner)
+
+    for pair in pairs:
+        eq_pos = pair.find("=")
+        if eq_pos < 0:
+            continue
+        key = pair[:eq_pos].strip()
+        raw_value = pair[eq_pos + 1:]
+        # 解码 SimpleCoding 值
+        decoded_value = simplecoding_decode(raw_value)
+        result[key] = decoded_value
+
+    return result

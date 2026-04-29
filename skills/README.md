@@ -71,7 +71,7 @@ description: >
   技能描述。包含何时使用此技能、触发关键词。
   AI Agent 根据此描述自动判断是否应激活该技能。
 license: MIT
-compatibility: Python 3.9+, PYaCy>=0.2.3
+compatibility: Python 3.9+, PYaCy>=0.3.1
 metadata:
   level: 2
   category: search

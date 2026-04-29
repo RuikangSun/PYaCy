@@ -7,8 +7,8 @@ description: >
   关键词触发: bootstrap、入网、引导、发现节点、P2P连接、节点发现、peer discovery、网络接入。
 license: MIT
 compatibility: >
-  Python 3.9+, PYaCy>=0.2.3, 网络连接（能访问至少一个 YaCy Public Seed 节点）。
-  Junior 模式无需公网 IP。PYaCy 仓库: https://github.com/pyacy/pyacy
+  Python 3.9+, PYaCy>=0.3.1, 网络连接（能访问至少一个 YaCy Public Seed 节点）。
+  Junior 模式无需公网 IP。PYaCy 仓库: https://github.com/RuikangSun/PYaCy
 metadata:
   level: 2
   category: p2p
@@ -34,7 +34,7 @@ metadata:
 ## 前置条件
 
 1. 已安装 PYaCy 包: `pip install pyacy`
-2. 网络能访问至少一个 YaCy Public Seed 节点（默认使用 5 个公共种子）
+2. 网络能访问至少一个 YaCy Public Seed 节点（内置 31 个公共种子，v0.3.0 扩展）
 3. 无需公网 IP（PYaCy 默认为 Junior 节点）
 
 ## 核心工作流程
@@ -104,12 +104,9 @@ node.bootstrap()
 
 ### 默认公共种子节点列表
 
-PYaCy 内置了 5 个 YaCy freeworld 网络的公共种子:
-1. `http://yacy.searchlab.eu:8090`
-2. `http://yacy.dyndns.org:8090`
-3. `http://130.255.73.69:8090`
-4. `http://suen.ddns.net:8090`
-5. `http://77.87.48.15:8090`
+PYaCy 内置了 31 个 YaCy freeworld 网络的公共种子（v0.3.0 扩展），
+包括: `yacy.searchlab.eu`、`yacy.dyndns.org`、`130.255.73.69` 等。
+完整列表参见 `src/pyacy/p2p/seeds.py`。
 
 ## 无公网 IP 的工作原理
 
