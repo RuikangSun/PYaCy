@@ -178,8 +178,6 @@ python examples/p2p_search.py
 | 完整 P2P 节点 | Senior/Principal 节点模式，支持传入连接 | ★★★★★ |
 | Web UI | 简易 Web 管理界面 | ★★★ |
 
-> **推荐路径**：当前功能已覆盖日常搜索和 P2P 网络接入需求。下一步建议实现 RWI 索引接收，使 PYaCy 能为 P2P 网络贡献搜索索引。
-
 ## 许可证
 
 MIT License — 详见 [LICENSE](LICENSE)。

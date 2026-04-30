@@ -121,7 +121,7 @@ PYaCy/
 │   ├── dht/
 │   │   └── search.py        # DHT search client
 │   └── network.py           # PYaCyNode network manager
-├── tests/                   # Test suite (183 tests)
+├── tests/                   # Test suite (340 tests)
 ├── examples/                # Usage examples
 ├── skills/                  # Agent Skills (AI assistant integration)
 ├── pyproject.toml
@@ -139,7 +139,7 @@ pytest tests/ -v
 
 # Run examples
 python examples/basic_usage.py
-python examples/level2_p2p_search.py
+python examples/p2p_search.py
 ```
 
 ## Roadmap
@@ -175,8 +175,6 @@ python examples/level2_p2p_search.py
 | Built-in Crawler | Standalone web crawler for building local Solr index | ★★★★ |
 | Full P2P Node | Senior/Principal mode with incoming connection support | ★★★★★ |
 | Web UI | Simple web management interface | ★★★ |
-
-> **Recommended path**: The current feature set covers daily search and P2P network access. The next step is implementing RWI index receiving so PYaCy can contribute search indices to the P2P network.
 
 ## License
 
