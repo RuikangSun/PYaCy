@@ -1,10 +1,10 @@
 [build-system]
 requires = ["setuptools>=64.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyacy"
-version = "0.3.1"
+version = "0.3.2"
 description = "YaCy 分布式搜索引擎的 Python 客户端库"
 readme = "README.md"
 license = {text = "MIT"}

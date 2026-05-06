@@ -29,7 +29,7 @@ try:
     from importlib.metadata import version as _pkg_version
     _VERSION = _pkg_version("pyacy")
 except Exception:
-    _VERSION = "0.3.1"  # fallback：与 pyproject.toml 保持同步
+    _VERSION = "0.3.2"  # fallback：与 pyproject.toml 保持同步
 
 
 # ---------------------------------------------------------------------------

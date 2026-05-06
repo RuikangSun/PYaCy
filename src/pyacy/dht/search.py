@@ -18,7 +18,10 @@ DHT 搜索原理:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -107,6 +110,130 @@ class DHTSearchResult:
         """引用列表。"""
         return self.references
 
+    def page(self, offset: int = 0, limit: int = 20) -> DHTSearchResult:
+        """返回分页后的搜索结果副本（v0.3.2 新增）。
+
+        对已收集的引用和链接进行分页，不修改原始对象。
+
+        Args:
+            offset: 起始位置（从 0 开始）。
+            limit: 每页条数。
+
+        Returns:
+            包含分页数据的新 DHTSearchResult。
+        """
+        paged_refs = self.references[offset:offset + limit]
+        paged_links = self.links[offset:offset + limit]
+        return DHTSearchResult(
+            success=self.success,
+            search_time_ms=self.search_time_ms,
+            references=paged_refs,
+            links=paged_links,
+            link_count=len(paged_refs),
+            join_count=self.join_count,
+            raw=self.raw,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 搜索结果缓存（v0.3.2 新增）
+# ---------------------------------------------------------------------------
+
+
+class SearchCache:
+    """LRU 搜索结果缓存。
+
+    缓存近期搜索查询的结果，避免重复查询相同关键词。
+    使用 OrderedDict 实现 LRU 淘汰策略。
+
+    使用示例::
+
+        cache = SearchCache(max_size=64, ttl_seconds=300)
+        cache.put("python", result)
+        cached = cache.get("python")  # 命中缓存
+    """
+
+    def __init__(self, max_size: int = 64, ttl_seconds: float = 300.0):
+        """初始化缓存。
+
+        Args:
+            max_size: 最大缓存条目数（默认 64）。
+            ttl_seconds: 缓存条目存活时间（秒，默认 300 = 5 分钟）。
+        """
+        self._cache: OrderedDict[str, tuple[float, DHTSearchResult]] = (
+            OrderedDict()
+        )
+        self._max_size = max_size
+        self._ttl = ttl_seconds
+
+    def _make_key(self, query: str, **kwargs: Any) -> str:
+        """生成缓存键。
+
+        Args:
+            query: 搜索查询。
+            **kwargs: 其他参数（影响结果的因素）。
+
+        Returns:
+            缓存键字符串。
+        """
+        # 将影响结果的参数纳入键中
+        key_parts = [query.lower().strip()]
+        for k in sorted(kwargs.keys()):
+            v = kwargs[k]
+            if v:  # 只包含非空参数
+                key_parts.append(f"{k}={v}")
+        raw = "|".join(key_parts)
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+    def get(self, query: str, **kwargs: Any) -> DHTSearchResult | None:
+        """查找缓存。
+
+        Args:
+            query: 搜索查询。
+            **kwargs: 其他参数。
+
+        Returns:
+            缓存的 DHTSearchResult，或 None（未命中或已过期）。
+        """
+        key = self._make_key(query, **kwargs)
+        if key not in self._cache:
+            return None
+
+        ts, result = self._cache[key]
+        if time.monotonic() - ts > self._ttl:
+            # 已过期，移除
+            del self._cache[key]
+            return None
+
+        # 移到末尾（LRU）
+        self._cache.move_to_end(key)
+        return result
+
+    def put(self, query: str, result: DHTSearchResult, **kwargs: Any) -> None:
+        """存入缓存。
+
+        Args:
+            query: 搜索查询。
+            result: 搜索结果。
+            **kwargs: 其他参数。
+        """
+        key = self._make_key(query, **kwargs)
+        self._cache[key] = (time.monotonic(), result)
+        self._cache.move_to_end(key)
+
+        # LRU 淘汰
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
+
+    def clear(self) -> None:
+        """清空缓存。"""
+        self._cache.clear()
+
+    @property
+    def size(self) -> int:
+        """当前缓存条目数。"""
+        return len(self._cache)
+
 
 # ---------------------------------------------------------------------------
 # DHT 搜索客户端
@@ -120,6 +247,8 @@ class DHTSearchClient:
     1. 关键词 → 词哈希
     2. 向远程节点发送搜索请求
     3. 解析搜索结果
+
+    v0.3.2 新增：搜索结果缓存、单节点重试逻辑。
 
     使用示例::
 
@@ -135,13 +264,25 @@ class DHTSearchClient:
             print(ref.title, ref.url)
     """
 
-    def __init__(self, protocol: P2PProtocol):
+    def __init__(
+        self,
+        protocol: P2PProtocol,
+        *,
+        cache_max_size: int = 64,
+        cache_ttl: float = 300.0,
+    ):
         """初始化 DHT 搜索客户端。
 
         Args:
             protocol: P2P 协议实例。
+            cache_max_size: 搜索结果缓存最大条目数（默认 64）。
+            cache_ttl: 缓存条目存活时间（秒，默认 300）。
         """
         self.protocol: P2PProtocol = protocol
+        self.cache: SearchCache = SearchCache(
+            max_size=cache_max_size,
+            ttl_seconds=cache_ttl,
+        )
 
     # ------------------------------------------------------------------
     # 单节点搜索
@@ -193,26 +334,42 @@ class DHTSearchClient:
         if exclude_words:
             exclude_hashes = hash_to_words_exclude(exclude_words)
 
-        try:
-            response = self.protocol.search(
-                target_url=target_url,
-                target_hash=target_hash,
-                my_hash=my_hash,
-                query_hashes=query_hashes,
-                my_seed_str=my_seed_str,
-                count=count,
-                max_time=max_time_ms,
-                max_dist=max_distance,
-                language=language,
-                prefer=prefer,
-                contentdom=contentdom,
-                exclude_hashes=exclude_hashes,
-                abstracts=abstracts,
-            )
-            return _parse_search_response(response)
-        except Exception as exc:
-            _logger.warning("DHT 搜索失败 (%s): %s", target_url, exc)
-            return DHTSearchResult(success=False)
+        # 单节点重试逻辑（v0.3.2 新增）
+        # 最多重试 2 次（共 3 次尝试），指数退避
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = self.protocol.search(
+                    target_url=target_url,
+                    target_hash=target_hash,
+                    my_hash=my_hash,
+                    query_hashes=query_hashes,
+                    my_seed_str=my_seed_str,
+                    count=count,
+                    max_time=max_time_ms,
+                    max_dist=max_distance,
+                    language=language,
+                    prefer=prefer,
+                    contentdom=contentdom,
+                    exclude_hashes=exclude_hashes,
+                    abstracts=abstracts,
+                )
+                return _parse_search_response(response)
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    backoff = 0.5 * (2 ** attempt)  # 0.5s, 1.0s
+                    _logger.debug(
+                        "DHT 搜索重试 (%s): 第 %d 次失败, %.1fs 后重试: %s",
+                        target_url, attempt + 1, backoff, exc,
+                    )
+                    time.sleep(backoff)
+
+        _logger.warning(
+            "DHT 搜索失败 (%s): 已重试 3 次: %s",
+            target_url, last_exc,
+        )
+        return DHTSearchResult(success=False)
 
     # ------------------------------------------------------------------
     # 多节点搜索
@@ -238,6 +395,10 @@ class DHTSearchClient:
             count: 每个节点期望结果数。
             max_time_ms: 每个节点的最大搜索时间。
             max_workers: 最大并发数。
+            iterative: 是否启用迭代扩展（0 结果时自动扩大范围）。
+            expand_factor: 迭代扩展时的倍增因子。
+            offset: 分页偏移量（v0.3.2 新增，默认 0）。
+            use_cache: 是否使用缓存（v0.3.2 新增，默认 True）。
             **kwargs: 其他搜索参数。
 
         Returns:
@@ -318,6 +479,8 @@ class DHTSearchClient:
         max_peers: int = 20,
         iterative: bool = True,
         expand_factor: int = 3,
+        offset: int = 0,
+        use_cache: bool = True,
         **kwargs: Any,
     ) -> DHTSearchResult:
         """使用 DHT 哈希路由在已知节点池中执行全文搜索。
@@ -336,6 +499,10 @@ class DHTSearchClient:
             max_peers: 每轮最多查询的节点数。
             iterative: 是否启用迭代扩展（0 结果时自动扩大范围）。
             expand_factor: 迭代扩展时的倍增因子。
+            iterative: 是否启用迭代扩展（0 结果时自动扩大范围）。
+            expand_factor: 迭代扩展时的倍增因子。
+            offset: 分页偏移量（v0.3.2 新增，默认 0）。
+            use_cache: 是否使用缓存（v0.3.2 新增，默认 True）。
             **kwargs: 其他搜索参数。
 
         Returns:
@@ -372,6 +539,21 @@ class DHTSearchClient:
             "DHT 哈希路由: 查询 '%s' (%d 个词哈希) → %d 个负责节点",
             query, len(word_hashes), len(targets),
         )
+
+        # 缓存参数（v0.3.2 新增，始终定义以供后续使用）
+        cache_key_params = {
+            "count": count,
+            "max_peers": max_peers,
+            "language": kwargs.get("language", ""),
+        }
+
+        # 检查缓存
+        if use_cache:
+            cached = self.cache.get(query, **cache_key_params)
+            if cached:
+                _logger.debug("缓存命中：%s", query)
+                # 应用分页
+                return cached.page(offset=offset, limit=count) if offset or count < 20 else cached
 
         # 首轮搜索
         result = self.search_multiple(
@@ -426,6 +608,10 @@ class DHTSearchClient:
                     return expanded_result
 
                 targets = expanded_targets
+
+        # 缓存结果
+        if use_cache and result.success:
+            self.cache.put(query, result, **cache_key_params)
 
         return result
 
@@ -589,14 +775,15 @@ def _parse_resources(
                 links.append(url)
 
             # 构建 DHTReference
+            # 使用规范化字段名（parse_search_resource 已将 camelCase → snake_case）
             ref = DHTReference(
                 url_hash=parsed.get("hash", ""),
                 url=url,
                 title=parsed.get("title", ""),
                 description=parsed.get("descr", ""),
                 size=_safe_int(parsed.get("size", "0")),
-                word_count=_safe_int(parsed.get("wordcount", "0")),
-                last_modified=_safe_int(parsed.get("lastModified", "0")),
+                word_count=_safe_int(parsed.get("word_count", parsed.get("wordcount", "0"))),
+                last_modified=_safe_int(parsed.get("last_modified", "0")),
                 language=parsed.get("language", ""),
                 ranking=_safe_float(parsed.get("ranking", "0")),
             )

@@ -265,7 +265,7 @@ class TestParseResources:
         assert len(refs) == 1
         assert refs[0].url_hash == "abc"
         assert refs[0].url == ""
-        assert refs[0].title == ""
+        assert isinstance(refs[0].title, str)  # v0.3.2: M-04 回退逻辑使 title 可能有值
         assert refs[0].size == 0
 
     def test_realistic_response(self):

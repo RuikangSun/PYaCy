@@ -341,8 +341,22 @@ def _parse_compressed_seed(body: str) -> dict[str, str]:
         raise ValueError(f"解压缩种子失败: {e}") from e
 
 
-def _split_csv_properties(text: str) -> list[str]:
-    """在属性字符串中安全地按逗号分割，处理逗号和反斜杠转义。
+def _split_csv_properties(
+    text: str,
+    *,
+    chinese_comma_separator: bool = True,
+) -> list[str]:
+    """在属性字符串中安全地按逗号分割，处理逗号、反斜杠转义和花括号嵌套。
+
+    **花括号嵌套处理**（v0.3.2 修复 S-04）：
+    跟踪花括号嵌套深度，仅在深度为 0 时分割逗号。
+    这确保了值中包含花括号的内容（如嵌套的 ``{key=value}``）
+    不会被错误分割。
+
+    支持的分隔符：
+    - ``,`` — ASCII 逗号（YaCy 标准分隔符）
+    - ``，`` — 中文全角逗号（U+FF0C），通过 ``chinese_comma_separator``
+      参数控制是否作为分隔符
 
     YaCy 种子格式中:
     - ``\,`` 表示字面逗号
@@ -350,25 +364,43 @@ def _split_csv_properties(text: str) -> list[str]:
 
     Args:
         text: CSV 风格的属性字符串。
+        chinese_comma_separator: 是否将中文全角逗号 ``，``（U+FF0C）
+            视为分隔符。默认 True（向后兼容）。对于 resource 字段
+            解析，应设为 False 以避免值中的中文标点被错误分割。
 
     Returns:
         分割后的属性片段列表。
     """
     result: list[str] = []
     current: list[str] = []
+    brace_depth: int = 0  # 花括号嵌套深度
     i = 0
 
     while i < len(text):
         ch = text[i]
         if ch == "\\" and i + 1 < len(text):
+            # 转义序列：跳过下一个字符
             current.append(text[i + 1])
             i += 2
-        elif ch == ",":
+        elif ch == "{":
+            # 进入嵌套花括号
+            brace_depth += 1
+            current.append(ch)
+            i += 1
+        elif ch == "}":
+            # 退出嵌套花括号
+            brace_depth = max(0, brace_depth - 1)
+            current.append(ch)
+            i += 1
+        elif ch == "," and brace_depth == 0:
+            # ASCII 逗号，且不在花括号内部 → 分隔符
             result.append("".join(current))
             current = []
             i += 1
-        elif ch in ("{", "}"):
-            # 忽略花括号
+        elif chinese_comma_separator and ch == "\uff0c" and brace_depth == 0:
+            # 中文全角逗号，且不在花括号内部 → 分隔符
+            result.append("".join(current))
+            current = []
             i += 1
         else:
             current.append(ch)
@@ -511,10 +543,19 @@ def simplecoding_decode(value: str) -> str:
     if prefix == "b":
         # Base64 编码
         try:
-            # 使用标准 Base64 解码
             import base64 as _b64
-            decoded = _b64.b64decode(data)
-            return decoded.decode("utf-8", errors="replace")
+            import re as _re
+            # 验证是否为合法的 Base64 字符（URL-safe: A-Z, a-z, 0-9, -, _, =）
+            # 如果包含非法字符（如 !, @, # 等），说明不是 Base64，返回原始数据
+            if _re.match(r'^[A-Za-z0-9_\-+=/]*$', data):
+                # 补全 Base64 padding（YaCy 节点会去掉末尾的 '='）
+                padded = data + "=" * (-len(data) % 4)
+                # 使用 URL-safe Base64 解码（兼容 YaCy 的 '-' 和 '_' 字符）
+                decoded = _b64.urlsafe_b64decode(padded)
+                return decoded.decode("utf-8", errors="replace")
+            else:
+                # 包含非法 Base64 字符，返回原始数据
+                return data
         except Exception:
             # 解码失败时返回原始数据
             return data
@@ -551,13 +592,44 @@ def simplecoding_decode_bytes(value: str) -> bytes:
     if prefix == "b":
         try:
             import base64 as _b64
-            return _b64.b64decode(data)
+            import re as _re
+            # 验证是否为合法的 Base64 字符
+            if _re.match(r'^[A-Za-z0-9_\-+=/]*$', data):
+                padded = data + "=" * (-len(data) % 4)
+                return _b64.urlsafe_b64decode(padded)
+            else:
+                return data.encode("utf-8")
         except Exception:
             return data.encode("utf-8")
     elif prefix == "p":
         return data.encode("utf-8")
     else:
         return value.encode("utf-8")
+
+
+def _normalize_resource_key(key: str) -> str:
+    """将 YaCy resource 字段名规范化为小写下划线形式。
+
+    YaCy 不同版本可能使用不同的字段命名风格：
+    - camelCase: ``lastModified``, ``wordCount``
+    - snake_case: ``last_modified``, ``word_count``
+    - 混合: ``wordcount``
+
+    本函数将 camelCase 统一转为 snake_case 小写形式，
+    使得后续代码可用单一名称访问所有字段。
+
+    Args:
+        key: 原始字段名。
+
+    Returns:
+        规范化后的字段名（小写，下划线分隔）。
+    """
+    if not key:
+        return key
+    # camelCase → snake_case：在大写字母前插入下划线，然后全转小写
+    import re as _re
+    normalized = _re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key)
+    return normalized.lower()
 
 
 def parse_search_resource(resource_str: str) -> dict[str, str]:
@@ -568,11 +640,19 @@ def parse_search_resource(resource_str: str) -> dict[str, str]:
 
     其中值使用 SimpleCoding 编码（``b|`` 或 ``p|`` 前缀）。
 
+    字段名处理：
+    - YaCy 不同版本可能使用 camelCase（``lastModified``）或
+      snake_case（``last_modified``），本函数统一规范化为小写下划线形式。
+    - 同时保留原始字段名作为备用键。
+
+    缺失字段回退：
+    - 若 ``title`` 为空但 ``descr`` 非空，用 ``descr`` 前 50 字符作为 title。
+
     Args:
         resource_str: resource 字段值（花括号包裹）。
 
     Returns:
-        解析后的属性字典，值已解码。
+        解析后的属性字典，值已解码，字段名已规范化。
 
     示例::
 
@@ -593,8 +673,11 @@ def parse_search_resource(resource_str: str) -> dict[str, str]:
         return result
 
     # 按逗号分割键值对
-    # 注意：值中可能包含逗号（如 URL 参数），但 YaCy 使用反斜杠转义
-    pairs = _split_csv_properties(inner)
+    # 注意：resource 字段中值可能包含中文逗号（如中文描述），
+    # 因此禁用中文逗号作为分隔符（chinese_comma_separator=False），
+    # 仅使用 ASCII 逗号作为 YaCy 标准分隔符。
+    # 同时启用花括号嵌套跟踪，避免嵌套值被错误分割。
+    pairs = _split_csv_properties(inner, chinese_comma_separator=False)
 
     for pair in pairs:
         eq_pos = pair.find("=")
@@ -604,6 +687,32 @@ def parse_search_resource(resource_str: str) -> dict[str, str]:
         raw_value = pair[eq_pos + 1:]
         # 解码 SimpleCoding 值
         decoded_value = simplecoding_decode(raw_value)
+        # 保留原始键名
         result[key] = decoded_value
+        # 同时存储规范化键名（camelCase → snake_case 小写）
+        normalized = _normalize_resource_key(key)
+        if normalized != key:
+            result[normalized] = decoded_value
+
+    # 缺失字段回退逻辑（v0.3.2 增强 M-04）：
+    # 1. title 为空时用 descr 前 50 字符
+    # 2. title 和 descr 都为空时，从 URL 中提取域名作为标题
+    # 3. URL 也为空时，使用 url_hash 作为最后回退
+    if not result.get("title"):
+        if result.get("descr"):
+            result["title"] = result["descr"][:50]
+        elif result.get("url"):
+            # 从 URL 提取域名作为临时标题
+            url = result["url"]
+            # 去掉协议前缀
+            for prefix in ("https://", "http://", "ftp://"):
+                if url.startswith(prefix):
+                    url = url[len(prefix):]
+                    break
+            # 取域名部分（到第一个 / 为止）
+            domain = url.split("/")[0]
+            result["title"] = domain if domain else result["url"][:50]
+        elif result.get("hash"):
+            result["title"] = f"[{result['hash']}]"
 
     return result

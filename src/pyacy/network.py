@@ -374,6 +374,8 @@ class PYaCyNode:
         iterative: bool = True,
         language: str = "",
         exclude_words: list[str] | None = None,
+        offset: int = 0,
+        use_cache: bool = True,
         **kwargs: Any,
     ) -> DHTSearchResult:
         """执行 DHT 全文搜索（v0.3.0：哈希路由）。
@@ -388,6 +390,8 @@ class PYaCyNode:
             iterative: 是否启用迭代扩展（默认 True）。
             language: 语言过滤（如 "zh", "en"）。
             exclude_words: 排除词列表。
+            offset: 分页偏移量（v0.3.2 新增，默认 0）。
+            use_cache: 是否使用缓存（v0.3.2 新增，默认 True）。
             **kwargs: 其他搜索参数。
 
         Returns:
@@ -410,6 +414,8 @@ class PYaCyNode:
             iterative=iterative,
             language=language,
             exclude_words=exclude_words,
+            offset=offset,
+            use_cache=use_cache,
             **kwargs,
         )
 
