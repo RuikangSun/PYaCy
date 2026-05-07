@@ -9,7 +9,7 @@
 种子来源（优先级从高到低）：
     1. 本地缓存 ``~/.pyacy/seed_cache.json``（上次发现的稳健节点）
     2. 硬编码种子 ``HARDCODED_SEEDS``（编译时确定，定期人工维护）
-    3. 在线种子 — 通过 seedlist.json 动态获取
+    3. 在线种子 — 通过公开种子列表端点动态获取
 
 设计原则:
     - 纯 Python 标准库实现，零外部依赖
@@ -17,7 +17,7 @@
     - 三层冗余确保无单点故障
     - 自动降级：硬编码种子全部失效时回退到在线获取
 
-硬编码种子列表最后更新: 2026-04-28
+硬编码种子列表最后更新: 2026-05-07
 """
 
 from __future__ import annotations
@@ -66,46 +66,48 @@ _MIN_REACHABLE_SEEDS: int = 3
 #:   - PeerType: senior 或 principal
 #:   - 在线时间 ≥ 24 小时
 #:   - 索引词数 (ICount) ≥ 500
-#:   - 来源: yacy.searchlab.eu 的 seedlist.json (获取于 2026-04-28)
+#:   - 通过公开种子列表探测获取
 #:
 #: 维护说明:
-#:   - 每季度运行 ``scripts/analyze_seeds.py`` 更新此列表
+#:   - 每季度运行 ``scripts/update_seeds.py`` 更新此列表
 #:   - 更新后修改上方注释中的「最后更新」日期
 #:   - 每个种子包含 url 和 hash 两个字段
 HARDCODED_SEEDS: list[dict[str, str]] = [
-    # Official YaCy searchlab (最稳定)
-    {"url": "http://yacy.searchlab.eu:8090", "hash": "yv3vheCVCaqA"},
-    # Top 30 most reliable Senior/Principal nodes (by uptime & icount)
-    {"url": "http://130.61.239.99:8090", "hash": "WM3j2r2smH7"},
-    {"url": "http://87.177.78.74:8090", "hash": "LQ83kFUe4HiX"},
-    {"url": "http://83.164.76.127:8090", "hash": "ofkqqPOwpOfI"},
-    {"url": "http://yacy-crawler.andisearch.com:8090", "hash": "8sZfrAkw5qI"},
-    {"url": "http://173.66.113.113:8090", "hash": "HnXnw_kRjG7"},
-    {"url": "http://37.120.82.186:8090", "hash": "7Y2bHMFkLy3v"},
-    {"url": "http://213.144.128.18:8090", "hash": "bFdAsT7g6a"},
-    {"url": "http://69.213.230.177:8090", "hash": "y4sM9L6X4o2A"},
-    {"url": "http://47.39.5.99:8090", "hash": "smh2hOx4KLcN"},
-    {"url": "http://87.106.211.80:8090", "hash": "3kBT9K5v8LmC"},
-    {"url": "http://90.22.161.91:8090", "hash": "7P6sZ3oK1mXb"},
-    {"url": "http://83.9.96.244:8090", "hash": "yT4fM9L2W8cC"},
-    {"url": "http://5.75.231.55:8090", "hash": "VTY2bxW4SCU"},
-    {"url": "http://precisionyacy.v6.rocks:8090", "hash": "Oe4IxS7c5o"},
-    {"url": "http://65.109.95.213:46946", "hash": "APK3gH8bWj6y"},
-    {"url": "http://109.190.142.161:8090", "hash": "29QfA8T3mCz"},
-    {"url": "http://187.77.159.191:8090", "hash": "7H4nX2oL5wQc"},
-    {"url": "http://bebe-pub-42.wuenscheonline.de:8090", "hash": "zY5bH8kR3eU"},
-    {"url": "http://54.36.109.187:8091", "hash": "2T9kV7xN4jLw"},
-    {"url": "http://5.187.6.109:8090", "hash": "8M4yP2sB6fHk"},
-    {"url": "http://178.223.97.41:8090", "hash": "6N3uW8pJ2qEx"},
-    {"url": "http://85.134.30.3:8090", "hash": "1Rn9xL5mA7bV"},
-    {"url": "http://yacy.sigragequit.com:8090", "hash": "cpL3gQ4dW2fM"},
-    {"url": "http://202.47.179.144:8090", "hash": "REyJ2kM8b4o"},
-    {"url": "http://81.3.9.173:8090", "hash": "8T2hK7pL3mWv"},
-    {"url": "http://24.183.41.221:8091", "hash": "bQ4nX9sK1fHw"},
-    {"url": "http://85.214.254.232:8090", "hash": "5Df8mP3rU7yT"},
-    {"url": "http://112.71.211.215:8190", "hash": "HG6wA2zP9kN"},
-    {"url": "http://192.99.28.106:8090", "hash": "9K1cX8vB7mQp"},
-    {"url": "http://mikambo.org:8090", "hash": "fQ6lH2yT3oAd"},
+    # 通过并行连通性探测筛选的高质量种子节点。
+    # 探测时间: 2026-05-07
+    # 筛选条件: 可达 + 延迟最低
+    # 探测结果: 364 个候选, 100 个可达, 选出 30 个
+    # 延迟范围: 453-766ms (平均 641ms)
+    {"url": "http://47.148.65.168:49152", "hash": "bpcKc_WU0osl"},
+    {"url": "http://yacy-crawler.andisearch.com:8090", "hash": "qtIxPrwqGQmz"},
+    {"url": "http://66.114.134.193:8090", "hash": "VNwFiLMnONAM"},
+    {"url": "http://185.18.125.70:8090", "hash": "OqxbmEJMJx5j"},
+    {"url": "http://51.159.15.49:8090", "hash": "cBWDUGAh4sOY"},
+    {"url": "http://84.71.214.82:8090", "hash": "SEi0hNbo8AKQ"},
+    {"url": "http://192.18.156.94:8090", "hash": "xeqc_zJewyim"},
+    {"url": "http://69.173.253.236:8090", "hash": "n2R2Pj-kDZJl"},
+    {"url": "http://54.36.109.184:8091", "hash": "jayWgI-23LQB"},
+    {"url": "http://192.99.28.106:8090", "hash": "Ls7V_nMEHpit"},
+    {"url": "http://174.101.105.219:49158", "hash": "3FgDHWCyVeXI"},
+    {"url": "http://79.112.69.148:8090", "hash": "jR0fz0g0aww4"},
+    {"url": "http://109.190.142.161:8090", "hash": "OU_s3iRww6Lo"},
+    {"url": "http://83.164.76.127:8090", "hash": "5F3SzJDwvQwX"},
+    {"url": "http://184.144.165.242:8090", "hash": "qwiPGJoS296c"},
+    {"url": "http://185.31.242.163:8090", "hash": "yTZ2dsgqqHuu"},
+    {"url": "http://5.75.231.55:8090", "hash": "GPfTZlNVOiUV"},
+    {"url": "http://85.214.254.232:8090", "hash": "Bpo9w_tp_Bk3"},
+    {"url": "http://90.22.71.45:8090", "hash": "fGk7kDsA4gN5"},
+    {"url": "http://95.20.193.72:8090", "hash": "4d_CqjoAIe5b"},
+    {"url": "http://65.108.121.176:8090", "hash": "qJDy7B3m3Dys"},
+    {"url": "http://93.213.183.171:8090", "hash": "5TLE4QGSHv9B"},
+    {"url": "http://185.209.30.30:8090", "hash": "wzXXfmpgM7Kv"},
+    {"url": "http://37.120.82.186:8090", "hash": "BYr58yDM_Rm6"},
+    {"url": "http://92.255.251.66:8090", "hash": "Ab8-mAzTtmps"},
+    {"url": "http://93.190.202.83:49152", "hash": "a6Bf_Nzzi34M"},
+    {"url": "http://139.99.208.215:8090", "hash": "uF97zJFdq9zv"},
+    {"url": "http://68.118.220.72:8090", "hash": "5qZMfwrB0FCA"},
+    {"url": "http://81.3.9.173:8090", "hash": "1_DVU5Jj03dn"},
+    {"url": "http://178.31.110.213:8090", "hash": "E7BJYKvAkULu"},
 ]
 
 

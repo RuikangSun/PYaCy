@@ -559,6 +559,21 @@ def simplecoding_decode(value: str) -> str:
         except Exception:
             # 解码失败时返回原始数据
             return data
+    elif prefix == "z":
+        # Gzip 压缩 + Base64 编码（YaCy seed.txt 常用格式）
+        try:
+            import base64 as _b64
+            import gzip as _gzip
+            import re as _re
+            if _re.match(r'^[A-Za-z0-9_\-+=/]*$', data):
+                padded = data + "=" * (-len(data) % 4)
+                compressed = _b64.urlsafe_b64decode(padded)
+                decompressed = _gzip.decompress(compressed)
+                return decompressed.decode("utf-8", errors="replace")
+            else:
+                return data
+        except Exception:
+            return data
     elif prefix == "p":
         # 明文
         return data
@@ -597,6 +612,20 @@ def simplecoding_decode_bytes(value: str) -> bytes:
             if _re.match(r'^[A-Za-z0-9_\-+=/]*$', data):
                 padded = data + "=" * (-len(data) % 4)
                 return _b64.urlsafe_b64decode(padded)
+            else:
+                return data.encode("utf-8")
+        except Exception:
+            return data.encode("utf-8")
+    elif prefix == "z":
+        # Gzip 压缩 + Base64 编码
+        try:
+            import base64 as _b64
+            import gzip as _gzip
+            import re as _re
+            if _re.match(r'^[A-Za-z0-9_\-+=/]*$', data):
+                padded = data + "=" * (-len(data) % 4)
+                compressed = _b64.urlsafe_b64decode(padded)
+                return _gzip.decompress(compressed)
             else:
                 return data.encode("utf-8")
         except Exception:
