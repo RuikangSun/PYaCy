@@ -86,18 +86,8 @@ metadata:
 4. **错误自愈**: 技能指南包含常见错误诊断与自动恢复流程
 5. **MIT 协议**: 与 PYaCy 主项目一致，宽松开源
 
-## 为 PYaCy 贡献技能
-
-欢迎提交新的技能或改进现有技能！请遵循:
-
-1. 阅读 [Agent Skills 最佳实践](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
-2. 使用本目录中已有技能作为模板
-3. SKILL.md 正文控制在 500 行以内
-4. 包含完整的错误处理指南
-5. 提供可验证的使用示例
-
 ## 参考
 
 - [Agent Skills 规范](https://agentskills.io/specification)
 - [Skill Creator 指南](https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md)
-- [PYaCy 项目](https://github.com/pyacy/pyacy)
+- [PYaCy 项目](https://github.com/RuikangSun/PYaCy/)

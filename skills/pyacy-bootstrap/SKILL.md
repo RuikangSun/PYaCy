@@ -33,7 +33,7 @@ metadata:
 
 ## 前置条件
 
-1. 已安装 PYaCy 包: `pip install pyacy`
+1. 已安装 PYaCy 包（ https://github.com/RuikangSun/PYaCy/ ）
 2. 网络能访问至少一个 YaCy Public Seed 节点（内置 31 个公共种子，v0.3.0 扩展）
 3. 无需公网 IP（PYaCy 默认为 Junior 节点）
 
