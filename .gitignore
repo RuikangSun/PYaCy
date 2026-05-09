@@ -53,6 +53,9 @@ reports/
 # 开发内部文档（版本检查清单等）
 dev/
 
+# Runtime data (SQLite databases, caches)
+.pyacy/
+
 # OS
 Thumbs.db
 Desktop.ini

@@ -333,7 +333,8 @@ class TestNodeSearch:
 
     def test_search_without_peers_raises(self) -> None:
         """无节点时搜索应报错。"""
-        node = PYaCyNode()
+        # 使用内存数据库避免持久化数据干扰
+        node = PYaCyNode(rwi_db_path=":memory:")
         with pytest.raises(PYaCyP2PError, match="无可用于搜索"):
             node.search("test")
         node.close()

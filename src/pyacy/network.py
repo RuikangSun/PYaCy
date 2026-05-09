@@ -38,6 +38,7 @@ from .p2p.seeds import (
     probe_seeds,
     fetch_online_seeds,
 )
+from .rwi import RWIStorage, RWIPuller
 
 #: 日志记录器
 _logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class PYaCyNode:
         timeout: int = DEFAULT_TIMEOUT,
         network_name: str = DEFAULT_NETWORK_NAME,
         seed_urls: list[str] | None = None,
+        rwi_db_path: str | Path | None = None,
     ):
         """初始化 PYaCy 节点。
 
@@ -99,6 +101,9 @@ class PYaCyNode:
             timeout: P2P 请求默认超时（秒）。
             network_name: 网络名称（默认 "freeworld"）。
             seed_urls: 自定义种子节点 URL 列表。
+            rwi_db_path: RWI 存储数据库路径。
+                - None: 使用默认路径 ~/.pyacy/rwi.db
+                - ":memory:": 内存数据库（测试用）
         """
         # 创建本地 Junior Seed
         self._my_seed: Seed = Seed.create_junior(name=name, port=port)
@@ -114,6 +119,10 @@ class PYaCyNode:
 
         # DHT 搜索客户端
         self._search_client: DHTSearchClient = DHTSearchClient(self._protocol)
+
+        # RWI 存储和 Pull 模式（v0.4.0 新增）
+        self._rwi_storage: RWIStorage = RWIStorage(db_path=rwi_db_path)
+        self._rwi_puller: RWIPuller = RWIPuller(self, self._rwi_storage)
 
         # 节点发现状态
         self._peers: dict[str, Seed] = {}  # hash → Seed
@@ -169,6 +178,16 @@ class PYaCyNode:
         if self._bootstrap_time == 0:
             return float("inf")
         return time.time() - self._bootstrap_time
+
+    @property
+    def rwi_storage(self) -> RWIStorage:
+        """RWI 存储引擎。"""
+        return self._rwi_storage
+
+    @property
+    def rwi_puller(self) -> RWIPuller:
+        """RWI Pull 模式拉取器。"""
+        return self._rwi_puller
 
     # ------------------------------------------------------------------
     # 网络引导
@@ -376,50 +395,122 @@ class PYaCyNode:
         exclude_words: list[str] | None = None,
         offset: int = 0,
         use_cache: bool = True,
+        use_local_rwi: bool = True,
         **kwargs: Any,
     ) -> DHTSearchResult:
-        """执行 DHT 全文搜索（v0.3.0：哈希路由）。
+        """执行 DHT 全文搜索（v0.4.0：本地 RWI + 远程 DHT 并行）。
 
-        使用 DHT 哈希路由选择负责节点，而非随机选取。
-        若首轮无结果，自动扩大搜索范围（迭代扩展）。
+        搜索流程:
+        1. 查询本地 RWI 存储（如果启用）
+        2. 查询远程 DHT 节点
+        3. 合并去重结果
 
         Args:
             query: 搜索查询字符串。
             count: 期望结果数（默认 20）。
-            max_peers: 每轮最多搜索的节点数（默认 20，v0.2.x 为 5）。
+            max_peers: 每轮最多搜索的节点数（默认 20）。
             iterative: 是否启用迭代扩展（默认 True）。
             language: 语言过滤（如 "zh", "en"）。
             exclude_words: 排除词列表。
-            offset: 分页偏移量（v0.3.2 新增，默认 0）。
-            use_cache: 是否使用缓存（v0.3.2 新增，默认 True）。
+            offset: 分页偏移量（默认 0）。
+            use_cache: 是否使用缓存（默认 True）。
+            use_local_rwi: 是否查询本地 RWI（默认 True）。
             **kwargs: 其他搜索参数。
 
         Returns:
             DHTSearchResult 实例。
 
         Raises:
-            PYaCyP2PError: 如果没有可连接的节点。
+            PYaCyP2PError: 如果没有可连接的节点且无本地 RWI。
         """
-        if not self._peers:
+        # 检查是否有可用节点和本地数据
+        has_local_data = use_local_rwi and self._rwi_storage.count() > 0
+        if not self._peers and not has_local_data:
             raise PYaCyP2PError(
                 "无可用于搜索的节点。请先调用 bootstrap() 引导入网。"
             )
 
-        result = self._search_client.fulltext_search(
-            peers=list(self._peers.values()),
-            my_hash=self.hash,
-            query=query,
-            count=count,
-            max_peers=max_peers,
-            iterative=iterative,
-            language=language,
-            exclude_words=exclude_words,
-            offset=offset,
-            use_cache=use_cache,
-            **kwargs,
+        # 1. 查询本地 RWI 存储
+        local_refs: list = []
+        if use_local_rwi and self._rwi_storage.count() > 0:
+            try:
+                from .utils import word_to_hash
+                word_hash = word_to_hash(query)
+                local_entries = self._rwi_storage.query_by_word_hash(
+                    word_hash
+                )[:count]
+                # 将 RWIEntry 转换为 DHTReference
+                for entry in local_entries:
+                    from .dht.search import DHTReference
+                    ref = DHTReference(
+                        word_hash=entry.word_hash,
+                        url_hash=entry.url_hash,
+                        url=entry.url or "",
+                        title=entry.title or "",
+                        description=entry.description or "",
+                        size=entry.size,
+                        word_count=entry.word_count,
+                        last_modified=entry.last_modified,
+                        language=entry.language,
+                    )
+                    local_refs.append(ref)
+                _logger.info("本地 RWI 查询: %d 条结果", len(local_refs))
+            except Exception as exc:
+                _logger.debug("本地 RWI 查询失败: %s", exc)
+
+        # 2. 查询远程 DHT
+        remote_refs: list = []
+        if self._peers:
+            try:
+                result = self._search_client.fulltext_search(
+                    peers=list(self._peers.values()),
+                    my_hash=self.hash,
+                    query=query,
+                    count=count,
+                    max_peers=max_peers,
+                    iterative=iterative,
+                    language=language,
+                    exclude_words=exclude_words,
+                    offset=offset,
+                    use_cache=use_cache,
+                    **kwargs,
+                )
+                remote_refs = result.references
+                _logger.info("远程 DHT 查询: %d 条结果", len(remote_refs))
+            except Exception as exc:
+                _logger.warning("远程 DHT 查询失败: %s", exc)
+
+        # 3. 合并去重
+        seen_urls: set[str] = set()
+        merged_refs: list = []
+
+        # 本地 RWI 结果优先
+        for ref in local_refs:
+            if ref.url_hash not in seen_urls:
+                seen_urls.add(ref.url_hash)
+                merged_refs.append(ref)
+
+        # 远程 DHT 结果补充
+        for ref in remote_refs:
+            if ref.url_hash not in seen_urls:
+                seen_urls.add(ref.url_hash)
+                merged_refs.append(ref)
+
+        # 创建合并后的结果
+        from .dht.search import DHTSearchResult
+        merged_result = DHTSearchResult(
+            success=True,
+            references=merged_refs[:count],
+            join_count=len(self._peers),
+            search_time_ms=0,  # 会在上层计算
         )
 
-        return result
+        _logger.info(
+            "搜索完成: 本地 %d + 远程 %d = 合并 %d 条",
+            len(local_refs), len(remote_refs), len(merged_refs),
+        )
+
+        return merged_result
 
     def search_on_peer(
         self,
@@ -538,11 +629,77 @@ class PYaCyNode:
     # 上下文管理器
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # RWI Pull 模式（v0.4.0 新增）
+    # ------------------------------------------------------------------
+
+    def start_pull(self, *, interval: int = 300) -> None:
+        """启动后台定期 Pull 模式。
+
+        Pull 模式使无公网 IP 的 Junior 节点也能主动获取 RWI 数据。
+        通过向 Senior 节点发送搜索请求，将结果存储到本地 RWI。
+
+        Args:
+            interval: Pull 间隔（秒，默认 300 = 5 分钟）。
+        """
+        if not self._is_bootstrapped:
+            _logger.warning("Pull 启动失败: 节点未 bootstrap")
+            return
+
+        self._rwi_puller.start_periodic_pull(interval=interval)
+        _logger.info("RWI Pull 模式已启动（间隔=%ds）", interval)
+
+    def stop_pull(self) -> None:
+        """停止后台定期 Pull 模式。"""
+        if self._rwi_puller.is_running:
+            self._rwi_puller.stop_periodic_pull()
+            _logger.info("RWI Pull 模式已停止")
+
+    def pull_once(self) -> int:
+        """执行一次 Pull 操作。
+
+        Returns:
+            导入的 RWI 条目数。
+        """
+        if not self._is_bootstrapped:
+            _logger.warning("Pull 失败: 节点未 bootstrap")
+            return 0
+
+        return self._rwi_puller.pull_once()
+
+    def get_rwi_stats(self) -> dict[str, Any]:
+        """获取 RWI 存储和 Pull 模式统计信息。
+
+        Returns:
+            RWI 统计字典。
+        """
+        storage_stats = self._rwi_storage.stats()
+        pull_stats = self._rwi_puller.stats()
+        return {
+            **storage_stats,
+            "pull": pull_stats,
+        }
+
+    # ------------------------------------------------------------------
+    # 上下文管理器
+    # ------------------------------------------------------------------
+
     def close(self) -> None:
         """关闭节点，清理资源。
 
-        当前实现仅清理内存中的节点池。
+        清理内容:
+        1. 停止 RWI Pull 模式线程
+        2. 关闭 RWI 存储数据库连接
+        3. 清空内存中的节点池
         """
+        # 停止 Pull 模式
+        if self._rwi_puller.is_running:
+            self._rwi_puller.stop_periodic_pull()
+
+        # 关闭 RWI 存储
+        self._rwi_storage.close()
+
+        # 清空节点池
         self._peers.clear()
         self._is_bootstrapped = False
         _logger.info("PYaCy 节点已关闭: %s", self.name)
@@ -556,5 +713,6 @@ class PYaCyNode:
     def __repr__(self) -> str:
         return (
             f"PYaCyNode(name={self.name!r}, peers={len(self._peers)}, "
-            f"seniors={self.senior_count}, bootstrapped={self._is_bootstrapped})"
+            f"seniors={self.senior_count}, bootstrapped={self._is_bootstrapped}, "
+            f"rwi={self._rwi_storage.count()})"
         )

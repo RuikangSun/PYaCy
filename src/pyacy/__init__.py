@@ -22,7 +22,7 @@
     for ref in node.search("hello world").references:
         print(ref.url)
 
-项目主页: https://github.com/pyacy/pyacy
+项目主页: https://github.com/RuikangSun/PYaCy
 许可证: MIT
 """
 
@@ -61,6 +61,10 @@ from .dht import (
     DHTSearchResult,
     DHTReference,
 )
+from .rwi import RWIStorage, RWIPuller, RWIEntry
+from .crawler import SimpleCrawler, CrawlResult
+from .indexer import LocalIndexer, IndexedDocument
+from .api import PYaCyAdapter
 
 __all__ = [
     # HTTP 客户端
@@ -78,6 +82,18 @@ __all__ = [
     "DHTSearchClient",
     "DHTSearchResult",
     "DHTReference",
+    # RWI 存储（v0.4.0 新增）
+    "RWIStorage",
+    "RWIPuller",
+    "RWIEntry",
+    # 爬虫（v0.4.0 新增）
+    "SimpleCrawler",
+    "CrawlResult",
+    # 本地索引（v0.4.0 新增）
+    "LocalIndexer",
+    "IndexedDocument",
+    # API 适配器（v0.4.0 新增）
+    "PYaCyAdapter",
     # 异常
     "PYaCyError",
     "PYaCyConnectionError",
@@ -97,4 +113,4 @@ __all__ = [
     "PushResponse",
 ]
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"

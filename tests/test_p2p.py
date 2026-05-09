@@ -482,7 +482,7 @@ class TestPYaCyNode:
 
     def test_search_without_bootstrap(self) -> None:
         """未引导时搜索应报错。"""
-        node = PYaCyNode()
+        node = PYaCyNode(rwi_db_path=":memory:")
         with pytest.raises(PYaCyP2PError, match="无可用于搜索"):
             node.search("test")
 
