@@ -27,6 +27,7 @@ from typing import Any
 
 from ..p2p.protocol import P2PProtocol, P2PResponse
 from ..p2p.seed import Seed
+from ..search.query_parser import SearchQuery
 from ..utils import (
     hash_to_words_exclude,
     word_to_hash,
@@ -297,7 +298,7 @@ class DHTSearchClient:
         *,
         my_seed_str: str | None = None,
         count: int = 10,
-        max_time_ms: int = 3000,
+        max_time_ms: int = 8000,
         max_distance: int = 3,
         language: str = "",
         prefer: str = "",
@@ -314,7 +315,7 @@ class DHTSearchClient:
             query: 搜索查询（自然语言字符串）。
             my_seed_str: 本地种子字符串（可选）。
             count: 期望结果数（默认 10）。
-            max_time_ms: 最大搜索时间（毫秒，默认 3000）。
+            max_time_ms: 最大搜索时间（毫秒，默认 8000）。
             max_distance: 最大 DHT 跳数（默认 3）。
             language: 语言过滤（如 "zh", "en"）。
             prefer: 偏好排序方式。
@@ -508,6 +509,11 @@ class DHTSearchClient:
         Returns:
             DHTSearchResult 实例。
         """
+        # 解析高级搜索语法
+        # 提取操作符后使用 clean_query 进行 DHT 词哈希计算
+        search_query = SearchQuery.parse(query)
+        effective_query = search_query.clean_query or query
+
         # 筛选可连接的 Senior 节点
         senior_peers = [
             s for s in peers
@@ -519,7 +525,7 @@ class DHTSearchClient:
             return DHTSearchResult(success=False)
 
         # 对查询词计算词哈希，并找到负责节点
-        query_words = _tokenize_query(query)
+        query_words = _tokenize_query(effective_query)
         if not query_words:
             _logger.warning("搜索查询无有效词元")
             return DHTSearchResult(success=False)
@@ -540,7 +546,7 @@ class DHTSearchClient:
             query, len(word_hashes), len(targets),
         )
 
-        # 缓存参数（v0.3.2 新增，始终定义以供后续使用）
+        # 缓存参数
         cache_key_params = {
             "count": count,
             "max_peers": max_peers,
@@ -556,10 +562,13 @@ class DHTSearchClient:
                 return cached.page(offset=offset, limit=count) if offset or count < 20 else cached
 
         # 首轮搜索
+        # 原始 query 可能包含高级操作符（site:、intitle: 等），
+        # 这些操作符会导致 word_to_hash 产生无意义的哈希值。
+        # effective_query 已移除所有操作符，只保留纯文本搜索词。
         result = self.search_multiple(
             targets=targets,
             my_hash=my_hash,
-            query=query,
+            query=effective_query,
             count=count,
             **kwargs,
         )
@@ -595,7 +604,7 @@ class DHTSearchClient:
                 expanded_result = self.search_multiple(
                     targets=new_targets,
                     my_hash=my_hash,
-                    query=query,
+                    query=effective_query,
                     count=count,
                     **kwargs,
                 )
@@ -608,6 +617,26 @@ class DHTSearchClient:
                     return expanded_result
 
                 targets = expanded_targets
+
+        # 客户端侧过滤高级搜索语法
+        # DHT 搜索返回原始结果后，根据操作符（site:、filetype: 等）过滤
+        if search_query.has_filters:
+            original_count = len(result.references)
+            filtered_refs = search_query.filter_references(result.references)
+            filtered_links = search_query.filter_links(result.links)
+            result = DHTSearchResult(
+                success=result.success,
+                search_time_ms=result.search_time_ms,
+                references=filtered_refs,
+                links=filtered_links,
+                link_count=len(filtered_links),
+                join_count=result.join_count,
+                raw=result.raw,
+            )
+            _logger.info(
+                "高级语法过滤: %d → %d 条引用（query=%s）",
+                original_count, len(filtered_refs), search_query,
+            )
 
         # 缓存结果
         if use_cache and result.success:

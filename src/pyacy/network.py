@@ -26,6 +26,7 @@ from .dht.search import DHTSearchClient, DHTSearchResult
 from .exceptions import PYaCyError, PYaCyP2PError
 from .p2p.hello import HelloClient
 from .p2p.protocol import P2PProtocol, DEFAULT_TIMEOUT, DEFAULT_NETWORK_NAME
+from .search.query_parser import SearchQuery
 from .p2p.seed import (
     PEERTYPE_JUNIOR,
     PEERTYPE_SENIOR,
@@ -398,12 +399,14 @@ class PYaCyNode:
         use_local_rwi: bool = True,
         **kwargs: Any,
     ) -> DHTSearchResult:
-        """执行 DHT 全文搜索（v0.4.0：本地 RWI + 远程 DHT 并行）。
+        """执行 DHT 全文搜索。
 
         搜索流程:
-        1. 查询本地 RWI 存储（如果启用）
-        2. 查询远程 DHT 节点
-        3. 合并去重结果
+        1. 解析高级搜索语法（site:, filetype: 等操作符）
+        2. 查询本地 RWI 存储（如果启用）
+        3. 查询远程 DHT 节点（使用纯文本查询）
+        4. 合并去重结果
+        5. 客户端侧过滤高级操作符
 
         Args:
             query: 搜索查询字符串。
@@ -423,6 +426,10 @@ class PYaCyNode:
         Raises:
             PYaCyP2PError: 如果没有可连接的节点且无本地 RWI。
         """
+        # 解析高级搜索语法
+        search_query = SearchQuery.parse(query)
+        effective_query = search_query.clean_query or query
+
         # 检查是否有可用节点和本地数据
         has_local_data = use_local_rwi and self._rwi_storage.count() > 0
         if not self._peers and not has_local_data:
@@ -435,7 +442,7 @@ class PYaCyNode:
         if use_local_rwi and self._rwi_storage.count() > 0:
             try:
                 from .utils import word_to_hash
-                word_hash = word_to_hash(query)
+                word_hash = word_to_hash(effective_query)
                 local_entries = self._rwi_storage.query_by_word_hash(
                     word_hash
                 )[:count]
@@ -458,16 +465,22 @@ class PYaCyNode:
             except Exception as exc:
                 _logger.debug("本地 RWI 查询失败: %s", exc)
 
-        # 2. 查询远程 DHT
+        # 当存在高级过滤条件时，增大 count 和 max_peers 以获取更多候选结果。
+        # 过滤（site:、filetype:、intitle: 等）会大幅缩减结果，
+        # 因此需要更多原始数据才能在过滤后留够结果。
+        effective_count = count * 5 if search_query.has_filters else count
+        effective_max_peers = max_peers * 3 if search_query.has_filters else max_peers
+
+        # 2. 查询远程 DHT（使用纯文本查询，高级语法在客户端过滤）
         remote_refs: list = []
         if self._peers:
             try:
                 result = self._search_client.fulltext_search(
                     peers=list(self._peers.values()),
                     my_hash=self.hash,
-                    query=query,
-                    count=count,
-                    max_peers=max_peers,
+                    query=query,  # fulltext_search 内部会解析 SearchQuery
+                    count=effective_count,
+                    max_peers=effective_max_peers,
                     iterative=iterative,
                     language=language,
                     exclude_words=exclude_words,
@@ -496,6 +509,15 @@ class PYaCyNode:
                 seen_urls.add(ref.url_hash)
                 merged_refs.append(ref)
 
+        # 4. 客户端侧过滤高级搜索语法
+        if search_query.has_filters:
+            original_count = len(merged_refs)
+            merged_refs = search_query.filter_references(merged_refs)
+            _logger.info(
+                "高级语法过滤（合并后）: %d → %d 条",
+                original_count, len(merged_refs),
+            )
+
         # 创建合并后的结果
         from .dht.search import DHTSearchResult
         merged_result = DHTSearchResult(
@@ -506,8 +528,9 @@ class PYaCyNode:
         )
 
         _logger.info(
-            "搜索完成: 本地 %d + 远程 %d = 合并 %d 条",
+            "搜索完成: 本地 %d + 远程 %d = 合并 %d 条（高级过滤=%s）",
             len(local_refs), len(remote_refs), len(merged_refs),
+            search_query.has_filters,
         )
 
         return merged_result

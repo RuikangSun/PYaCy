@@ -24,12 +24,15 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
+
+from .robots import RobotsCache
 
 #: 日志记录器
 _logger = logging.getLogger(__name__)
@@ -161,26 +164,184 @@ class _HTMLTextExtractor(HTMLParser):
         return unique
 
 
+class URLFilter:
+    """URL 过滤器。
+
+    基于正则表达式的 URL 包含/排除过滤。
+    支持域名、路径、文件扩展名等多种过滤维度。
+
+    使用示例::
+
+        f = URLFilter(
+            include_patterns=[r"\.html$", r"/blog/"],
+            exclude_patterns=[r"/admin/", r"\.pdf$"],
+        )
+        f.matches("https://example.com/blog/post.html")  # True
+        f.matches("https://example.com/admin/panel")      # False
+    """
+
+    def __init__(
+        self,
+        *,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+    ):
+        """初始化过滤器。
+
+        Args:
+            include_patterns: 包含模式列表（正则表达式）。
+                仅匹配这些模式的 URL 会被保留。
+                空列表表示允许所有。
+            exclude_patterns: 排除模式列表（正则表达式）。
+                匹配这些模式的 URL 会被排除。
+        """
+        self._include = [
+            re.compile(p, re.IGNORECASE) for p in (include_patterns or [])
+        ]
+        self._exclude = [
+            re.compile(p, re.IGNORECASE) for p in (exclude_patterns or [])
+        ]
+
+    def matches(self, url: str) -> bool:
+        """检查 URL 是否通过过滤。
+
+        规则：
+        1. 如果有 include 模式，URL 必须匹配至少一个
+        2. URL 不能匹配任何 exclude 模式
+
+        Args:
+            url: 完整 URL。
+
+        Returns:
+            是否通过过滤。
+        """
+        # 包含过滤
+        if self._include:
+            if not any(p.search(url) for p in self._include):
+                return False
+
+        # 排除过滤
+        if self._exclude:
+            if any(p.search(url) for p in self._exclude):
+                return False
+
+        return True
+
+    @property
+    def has_filters(self) -> bool:
+        """是否有任何过滤规则。"""
+        return bool(self._include or self._exclude)
+
+
+class CrawlScheduler:
+    """爬取调度器。
+
+    实现按域名的请求间隔控制（礼貌爬取）。
+    不同域名可以并发，同域名串行且遵守间隔。
+
+    使用示例::
+
+        scheduler = CrawlScheduler(default_delay=5.0)
+        scheduler.wait("https://example.com/a")  # 立即返回
+        scheduler.wait("https://example.com/b")  # 等待 5 秒
+        scheduler.wait("https://other.com/c")    # 立即返回（不同域名）
+    """
+
+    def __init__(self, *, default_delay: float = 5.0):
+        """初始化调度器。
+
+        Args:
+            default_delay: 默认域名请求间隔（秒）。
+        """
+        self.default_delay = default_delay
+        self._domain_delays: dict[str, float] = {}  # 域名 → 间隔
+        self._last_requests: dict[str, float] = {}  # 域名 → 最后请求时间
+
+    def set_domain_delay(self, domain: str, delay: float) -> None:
+        """设置指定域名的请求间隔（通常来自 robots.txt Crawl-delay）。
+
+        Args:
+            domain: 域名（如 "example.com"）。
+            delay: 请求间隔（秒）。
+        """
+        self._domain_delays[domain.lower()] = delay
+
+    def get_delay(self, url: str) -> float:
+        """获取 URL 对应域名的请求间隔。
+
+        Args:
+            url: 完整 URL。
+
+        Returns:
+            请求间隔（秒）。
+        """
+        domain = self._extract_domain(url)
+        return self._domain_delays.get(domain, self.default_delay)
+
+    def wait(self, url: str) -> float:
+        """等待直到可以发送请求。
+
+        Args:
+            url: 完整 URL。
+
+        Returns:
+            实际等待时间（秒）。
+        """
+        domain = self._extract_domain(url)
+        delay = self._domain_delays.get(domain, self.default_delay)
+        now = time.monotonic()
+
+        if domain in self._last_requests:
+            elapsed = now - self._last_requests[domain]
+            if elapsed < delay:
+                wait_time = delay - elapsed
+                time.sleep(wait_time)
+                self._last_requests[domain] = time.monotonic()
+                return wait_time
+
+        self._last_requests[domain] = now
+        return 0.0
+
+    def record_request(self, url: str) -> None:
+        """记录请求时间（不等待）。
+
+        Args:
+            url: 完整 URL。
+        """
+        domain = self._extract_domain(url)
+        self._last_requests[domain] = time.monotonic()
+
+    @staticmethod
+    def _extract_domain(url: str) -> str:
+        """从 URL 提取域名。"""
+        try:
+            return urlparse(url).netloc.lower()
+        except Exception:
+            return url.lower()
+
+
 class SimpleCrawler:
     """简易网页爬虫。
 
-    提供基础的网页抓取和内容提取功能。
-    纯 Python 标准库实现，无需第三方依赖。
+    - 提供基础的网页抓取和内容提取功能。
+    - 纯 Python 标准库实现，无需第三方依赖。
+    - robots.txt 遵从（自动获取并缓存）
+    - URL 包含/排除过滤
+    - 按域名的请求间隔调度
 
     使用示例::
 
         crawler = SimpleCrawler()
 
-        # 抓取单个页面
+        # 抓取单个页面（自动检查 robots.txt）
         result = crawler.fetch("https://example.com")
         if result.ok:
             print(result.title, result.text[:100])
 
-        # 递归爬取（深度 2）
+        # 递归爬取（深度 2，排除 PDF）
+        f = URLFilter(exclude_patterns=[r"\.pdf$"])
+        crawler = SimpleCrawler(url_filter=f)
         results = crawler.crawl("https://example.com", depth=2)
-        for r in results:
-            if r.ok:
-                print(r.url, r.title)
     """
 
     def __init__(
@@ -190,6 +351,9 @@ class SimpleCrawler:
         timeout: int = DEFAULT_TIMEOUT,
         max_size: int = DEFAULT_MAX_SIZE,
         crawl_delay: float = DEFAULT_CRAWL_DELAY,
+        respect_robots: bool = True,
+        url_filter: URLFilter | None = None,
+        scheduler: CrawlScheduler | None = None,
     ):
         """初始化爬虫。
 
@@ -197,13 +361,28 @@ class SimpleCrawler:
             user_agent: HTTP User-Agent 头。
             timeout: 请求超时（秒）。
             max_size: 最大页面大小（字节）。
-            crawl_delay: 连续请求间的延迟（秒）。
+            crawl_delay: 连续请求间的默认延迟（秒）。
+            respect_robots: 是否遵守 robots.txt（默认 True）。
+            url_filter: URL 过滤器（可选）。
+            scheduler: 爬取调度器（可选，不传则自动创建）。
         """
         self.user_agent = user_agent
         self.timeout = timeout
         self.max_size = max_size
         self.crawl_delay = crawl_delay
+        self.respect_robots = respect_robots
         self._last_request_time: float = 0.0
+
+        # v0.4.1 新增组件
+        self.url_filter = url_filter or URLFilter()
+        self.scheduler = scheduler or CrawlScheduler(default_delay=crawl_delay)
+        self._robots_cache: RobotsCache | None = None
+        if respect_robots:
+            self._robots_cache = RobotsCache(
+                user_agent=user_agent,
+                timeout=timeout,
+                default_delay=crawl_delay,
+            )
 
     # ------------------------------------------------------------------
     # 单页面抓取
@@ -222,15 +401,21 @@ class SimpleCrawler:
         start_time = time.monotonic()
         result = CrawlResult(url=url, fetched_at=int(time.time()))
 
-        # 遵守爬取延迟
-        self._enforce_delay()
+        # robots.txt 检查
+        if self._robots_cache and not self._robots_cache.can_fetch(url):
+            result.error = "robots.txt 禁止爬取"
+            _logger.info("robots.txt 禁止: %s", url)
+            return result
+
+        # 调度器等待（按域名限速）
+        self.scheduler.wait(url)
 
         try:
             req = Request(url, headers={
                 "User-Agent": self.user_agent,
                 "Accept": "text/html,application/xhtml+xml,*/*",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Accept-Encoding": "identity",  # 不接受压缩，简化处理
+                "Accept-Encoding": "identity",
             })
 
             with urlopen(req, timeout=timeout or self.timeout) as resp:
@@ -321,6 +506,11 @@ class SimpleCrawler:
             if normalized in visited:
                 continue
             visited.add(normalized)
+
+            # URL 过滤
+            if not self.url_filter.matches(url):
+                _logger.debug("URL 过滤排除: %s", url)
+                continue
 
             # 抓取
             result = self.fetch(url, timeout=timeout)

@@ -24,9 +24,11 @@
     results = crawler.crawl("https://example.com", depth=2)
 """
 
-from .basic import SimpleCrawler, CrawlResult
+from .basic import SimpleCrawler, CrawlResult, URLFilter, CrawlScheduler
 
 __all__ = [
     "SimpleCrawler",
     "CrawlResult",
+    "URLFilter",
+    "CrawlScheduler",
 ]

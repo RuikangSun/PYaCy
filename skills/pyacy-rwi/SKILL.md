@@ -3,7 +3,6 @@ name: pyacy-rwi
 description: >
   使用 PYaCy 的 RWI（反向词索引）存储和 Pull 模式，实现本地 RWI 索引管理。
   当需要从 YaCy P2P 网络拉取 RWI 数据、查询本地 RWI 存储、管理本地索引时使用此技能。
-  Pull 模式使无公网 IP 的 Junior 节点也能主动获取 RWI 数据，提升搜索命中率。
   关键词触发: RWI、拉取、pull、本地索引、反向词索引、索引存储、导入RWI。
 license: MIT
 compatibility: >
@@ -157,9 +156,9 @@ storage.close()
 
 | 参数 | 默认值 | 说明 |
 |------|:------:|------|
-| `peers` | 3 | 每次 Pull 查询的 Senior 节点数 |
-| `word_count` | 3 | 每个节点查询的词哈希数 |
-| `timeout_ms` | 2000 | 每次查询的超时（毫秒） |
+| `peers` | 5 | 每次 Pull 查询的 Senior 节点数 |
+| `word_count` | 3 | 每次 Pull 查询的词哈希数 |
+| `timeout_ms` | 8000 | 每次查询的超时（毫秒） |
 
 **建议**：
 - `peers=3` 足够覆盖大多数场景，增大不会线性提升结果

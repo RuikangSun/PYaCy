@@ -67,10 +67,10 @@ _logger = logging.getLogger(__name__)
 
 #: Pull 模式默认参数
 DEFAULT_PULL_INTERVAL: int = 300      # Pull 间隔（秒，默认 5 分钟）
-DEFAULT_PULL_PEERS: int = 3           # 每次 Pull 选择的节点数（过多会因串行请求导致超时）
-DEFAULT_PULL_WORDS: int = 3           # 每次 Pull 的词哈希数（过多会因串行请求导致超时）
+DEFAULT_PULL_PEERS: int = 10          # 每次 Pull 选择的节点数
+DEFAULT_PULL_WORDS: int = 8           # 每次 Pull 的词哈希数
 DEFAULT_PULL_COUNT: int = 20          # 每次查询期望的结果数
-DEFAULT_PULL_TIMEOUT_MS: int = 2000   # 单次查询超时（毫秒，过长会导致不可达节点阻塞整个 Pull）
+DEFAULT_PULL_TIMEOUT_MS: int = 10000  # 单次查询超时（毫秒）
 
 # 高频英文种子词（用于初始 Pull）
 # 这些词在英文网页中出现频率极高，几乎所有 Senior 节点都有相关 RWI。
@@ -205,21 +205,32 @@ class RWIPuller:
             return 0
 
         # 3. 向每个节点发送搜索请求并收集 RWI
+        #    旧逻辑在第一个词哈希返回 0 条时就跳过该节点的所有剩余词哈希，
+        #    但这会导致节点只因一个词没有 RWI 就被完全跳过。
+        #    不同词的 RWI 存储是独立的，一个词没结果不代表其他词也没有。
         total_imported = 0
+        consecutive_failures = 0  # 连续失败计数器
         for target in targets:
-            peer_failed = False
+            consecutive_failures = 0
             for word_hash in word_hashes:
-                if peer_failed:
-                    break  # 该节点已失败，跳过剩余词哈希
+                # 连续 2 次失败才跳过该节点（而非 1 次就跳过）
+                if consecutive_failures >= 2:
+                    _logger.debug(
+                        "Pull 跳过节点 %s（连续 %d 次失败）",
+                        target.name, consecutive_failures,
+                    )
+                    break
                 try:
                     imported = self._pull_from_peer(target, word_hash)
                     total_imported += imported
                     if imported == 0:
-                        peer_failed = True  # 快速失败：跳过该节点剩余词哈希
+                        consecutive_failures += 1
+                    else:
+                        consecutive_failures = 0  # 成功则重置
                 except Exception as exc:
-                    peer_failed = True
+                    consecutive_failures += 1
                     _logger.debug(
-                        "Pull 失败 (%s, %s): %s — 跳过该节点剩余查询",
+                        "Pull 异常 (%s, %s): %s",
                         target.name, word_hash[:8], exc,
                     )
 
@@ -369,13 +380,16 @@ class RWIPuller:
         """选择本次 Pull 的目标节点。
 
         策略:
-        1. 从已知的 Senior 节点中选择
-        2. 优先选择最近未联系的节点（负载均衡）
-        3. 随机打乱以避免总是查询同一批节点
+        1. 使用词哈希的 DHT 路由找到负责节点（而非随机选择）
+        2. 随机打乱以避免总是查询同一批节点
+
+        这确保了 Pull 请求发往真正拥有该词 RWI 的节点，大幅提高命中率。
 
         Returns:
             目标 Seed 列表。
         """
+        from ..dht.search import _find_responsible_peers
+
         reachable = [
             s for s in self._node._peers.values()
             if s.is_reachable and s.is_senior() and s.base_url
@@ -384,14 +398,40 @@ class RWIPuller:
         if not reachable:
             return []
 
-        # 按最近联系时间排序（最久未联系的优先）
-        reachable.sort(key=lambda s: s.last_contact)
+        # 使用 DHT 哈希路由找到对种子词负责的节点
+        # 生成一批种子词哈希用于路由
+        all_seed_words = _SEED_WORDS_EN + _SEED_WORDS_ZH
+        random.shuffle(all_seed_words)
+        seed_hashes = [word_to_hash(w) for w in all_seed_words[:self._words_count * 2]]
 
-        # 随机打乱前 N 个（避免总是查询同一批节点）
-        candidates = reachable[:self._peers_count * 2]
-        random.shuffle(candidates)
+        # 对每个种子词哈希找到最负责的节点
+        seen_urls: set[str] = set()
+        routed_targets: list[Seed] = []
 
-        return candidates[:self._peers_count]
+        for wh in seed_hashes:
+            responsible = _find_responsible_peers(
+                word_hashes=[wh],
+                peers=reachable,
+                k=self._peers_count,
+            )
+            for _dist, peer in responsible:
+                url = peer.base_url
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    routed_targets.append(peer)
+                    if len(routed_targets) >= self._peers_count:
+                        break
+            if len(routed_targets) >= self._peers_count:
+                break
+
+        if not routed_targets:
+            # 回退：最近未联系的节点
+            reachable.sort(key=lambda s: s.last_contact)
+            candidates = reachable[:self._peers_count * 2]
+            random.shuffle(candidates)
+            routed_targets = candidates[:self._peers_count]
+
+        return routed_targets
 
     # ------------------------------------------------------------------
     # 定期 Pull
