@@ -3,23 +3,31 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://python.org)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-green)](https://github.com/RuikangSun/PYaCy)
+[![Tests](https://img.shields.io/badge/tests-387%20passed-brightgreen)]()
 
 English | [中文](README.md)
 
-**PYaCy** is a Python client library for the [YaCy](https://yacy.net/) distributed search engine. It provides search queries, status monitoring, crawler control, P2P network bootstrapping, and DHT distributed search — all with **zero third-party runtime dependencies** (pure Python standard library).
+**PYaCy** is a Python client library for the [YaCy](https://yacy.net/) distributed search engine. It not only wraps the YaCy REST API but also directly participates in the P2P distributed network — search, crawl, index, pull RWI — with **zero third-party runtime dependencies**.
 
-## Features
+---
 
-- 🔍 **Search Queries** — Local and P2P global search
-- 🌐 **P2P Network Bootstrapping** — Automatic node discovery from seed nodes
-- 🤝 **Hello Handshake** — Exchange status information with other YaCy peers
-- 📡 **DHT Distributed Search** — Cross-node distributed hash table queries
-- 🕷️ **Crawler Control** — Start and manage web crawl jobs
-- 📄 **Document Push** — Push documents directly into the YaCy index
-- 🛡️ **Junior-Friendly** — Participate in the P2P network without a public IP
-- 📦 **Zero Dependencies** — Pure `urllib` implementation, no third-party packages
+## ✨ Features
 
-## Quick Start
+| Category | Feature | Description |
+|:---|------|------|
+| 🔍 **Search** | HTTP + DHT distributed search | Local/global/advanced syntax (`site:` `filetype:` `intitle:` etc.) |
+| 🌐 **P2P Network** | Bootstrap + peer discovery | 31 hardcoded seeds, auto-discovers ~160 peers |
+| 📡 **DHT Routing** | Word hash XOR distance routing | Iterative search expansion, precise responsible peer targeting |
+| 🕷️ **Crawler** | Built-in web crawler | Pure stdlib, depth/domain limits, robots.txt compliance, per-domain rate limiting |
+| 📇 **Local Index** | SQLite FTS5 full-text indexing | Crawl then index, Chinese CJK tokenization support |
+| 📥 **RWI Pull** | Proactive RWI data pulling | No public IP needed, fetch reverse word indexes from Senior peers |
+| 🔌 **API Adapter** | Unified search interface | Local RWI + remote DHT parallel query, seamless fallback |
+| 📦 **Zero Deps** | Pure Python standard library | `urllib` + `sqlite3` + `html.parser`, pip install and go |
+| 🤖 **Agent Skills** | AI agent integration | 5 Agent Skills, ready for Claude Code / Cursor |
+
+---
+
+## 🚀 Quick Start
 
 ### Installation
 
@@ -27,155 +35,276 @@ English | [中文](README.md)
 pip install -e .
 ```
 
-### Search & Status
+PYaCy has **zero runtime dependencies**, requiring only Python ≥ 3.9.
 
-```python
-from pyacy import YaCyClient
-
-with YaCyClient("http://localhost:8090") as client:
-    # Search
-    results = client.search("python", resource="global")
-    for item in results.items:
-        print(f"{item.title} — {item.link}")
-
-    # Node status
-    status = client.status()
-    print(f"Index: {status.index_size} docs, uptime {status.uptime_hours:.1f}h")
-```
-
-### P2P Network & Distributed Search
+### P2P Node — Join the YaCy network directly
 
 ```python
 from pyacy import PYaCyNode
 
-# Create a Junior node (no public IP required)
-node = PYaCyNode(name="my-pyacy-node")
-print(f"Node hash: {node.hash}")
-
-# Bootstrap from public seed nodes
-node.bootstrap()
-
-# View network stats
-stats = node.get_peer_stats()
-print(f"Discovered {stats['total_peers']} peers")
+node = PYaCyNode(name="my-node")
+node.bootstrap()                          # Bootstrap, discover ~160 peers
 
 # DHT distributed search
-results = node.search("open source")
+results = node.search("python", count=10)
 for ref in results.references:
-    print(ref.url)
+    print(f"{ref.title} — {ref.url}")
+
+# Advanced search syntax
+results = node.search('site:github.com python async', count=10)
+results = node.search('filetype:pdf machine learning', count=10)
 
 node.close()
 ```
 
-## API Reference
+### Crawler + Local Index
 
-### HTTP Client (`YaCyClient`)
+```python
+from pyacy.crawler import SimpleCrawler
+from pyacy.indexer import LocalIndexer
 
-| API Endpoint | Method | Description |
-|--------------|--------|-------------|
-| `/yacysearch.json` | `search()` | Search queries (local/P2P) |
-| `/suggest.json` | `suggest()` | Search suggestions (autocomplete) |
-| `/api/status_p.json` | `status()` | Node runtime status |
-| `/api/version.json` | `version()` | Version information |
-| `/Network.json` | `network()` | P2P network statistics |
-| `/Crawler_p.html` | `crawl_start()` | Start a crawl job |
-| `/CrawlStartExpert.html` | `crawl_start_expert()` | Expert-mode crawl start |
-| `/api/push_p.json` | `push_document()` | Push document to index |
-| `/IndexDeletion_p.html` | `delete_index()` | Delete index documents |
-| `/api/blacklists/*` | `get_blacklists()` etc. | Blacklist management |
+crawler = SimpleCrawler()
+indexer = LocalIndexer()
 
-### P2P Network (`PYaCyNode`)
+# Fetch a page
+result = crawler.fetch("https://example.com")
+print(f"Title: {result.title}, Text: {len(result.text)} chars")
 
-| Module | Class/Method | Description |
-|--------|--------------|-------------|
-| `pyacy.network` | `PYaCyNode` | P2P node management & network topology |
-| `pyacy.p2p.seed` | `Seed` | Peer information model & serialization |
-| `pyacy.p2p.protocol` | `P2PProtocol` | P2P protocol encoding/decoding |
-| `pyacy.p2p.hello` | `HelloClient` | Hello handshake protocol |
-| `pyacy.dht.search` | `DHTSearchClient` | DHT distributed search |
+# Index locally
+indexer.add_document(url=result.url, title=result.title, content=result.text)
 
-### Peer Types
+# Search the local index
+hits = indexer.search("example")
+for hit in hits:
+    print(f"{hit['title']} — {hit['url']}")
+```
+
+### RWI Pull — Build local index without a public IP
+
+```python
+from pyacy import PYaCyNode
+
+node = PYaCyNode(name="my-node")
+node.bootstrap()
+
+# Pull RWI data from Senior peers
+imported = node.pull_once()
+print(f"Imported {imported} RWI entries")
+
+# Check local RWI stats
+stats = node.get_rwi_stats()
+print(f"Local RWI: {stats['total']} entries")
+
+# Search automatically merges local RWI + remote DHT
+results = node.search("python", use_local_rwi=True)
+node.close()
+```
+
+### Unified API Adapter
+
+```python
+from pyacy import PYaCyAdapter
+
+adapter = PYaCyAdapter()
+adapter.bootstrap()
+
+# Local RWI + remote DHT parallel search
+results = adapter.search("python")
+print(f"Local: {results['local_count']}, Remote: {results['remote_count']}")
+
+# Network status
+status = adapter.get_network_status()
+print(f"Known peers: {status['peer_count']}")
+```
+
+---
+
+## 📖 API Reference
+
+### Top-Level Entry Points
+
+| Class | Purpose |
+|---|------|
+| `YaCyClient` | HTTP client, connects to a running YaCy node |
+| `PYaCyNode` | P2P node, directly joins the YaCy distributed network |
+| `PYaCyAdapter` | Unified API interface, local + remote parallel search |
+
+### Default Junior Node Mode
 
 | Type | Description | Public IP |
-|------|-------------|:---------:|
-| **Junior** | Passive peer, cannot accept incoming connections | ❌ Not required |
-| **Senior** | Active peer, can accept incoming connections | ✅ Required |
-| **Principal** | Core peer, provides network infrastructure | ✅ Required |
+|:---|------|:---:|
+| **Junior** | Passive node, cannot receive incoming connections (**default**) | ❌ |
+| **Senior** | Active node, can receive incoming connections | ✅ |
+| **Principal** | Core node, provides network infrastructure | ✅ |
 
-PYaCy runs as a **Junior** peer by default.
+### Module Index
 
-## Project Structure
+| Module | Key Classes/Functions | Description |
+|:---|------|------|
+| `pyacy.client` | `YaCyClient` | HTTP search, status, crawler control, document push |
+| `pyacy.network` | `PYaCyNode` | P2P node lifecycle, bootstrap, search routing |
+| `pyacy.dht.search` | `DHTSearchClient` | DHT hash routing, XOR distance, parallel search |
+| `pyacy.search.query_parser` | `SearchQuery` | Advanced search syntax (site/filetype/intitle etc.) |
+| `pyacy.rwi.storage` | `RWIStorage` | SQLite FTS5 RWI storage engine |
+| `pyacy.rwi.pull` | `RWIPuller` | Pull mode, proactive RWI fetching |
+| `pyacy.crawler.basic` | `SimpleCrawler` | Pure stdlib web crawler |
+| `pyacy.crawler.robots` | `RobotsCache` | robots.txt parsing and compliance |
+| `pyacy.indexer.local` | `LocalIndexer` | SQLite FTS5 local full-text index |
+| `pyacy.api.adapter` | `PYaCyAdapter` | Unified search interface |
+| `pyacy.p2p.seed` | `Seed`, `SeedKeys` | Peer data model |
+| `pyacy.p2p.protocol` | `P2PProtocol` | P2P protocol codec |
+| `pyacy.p2p.hello` | `HelloClient` | Hello handshake protocol |
+| `pyacy.p2p.seeds` | `HARDCODED_SEEDS` etc. | Seed management and three-layer discovery |
+| `pyacy.exceptions` | `PYaCyError` etc. (7 types) | Exception hierarchy |
+| `pyacy.utils` | `yacy_base64_encode` etc. | Base64, word hash, XOR distance |
+
+---
+
+## 🗂️ Project Structure
 
 ```
 PYaCy/
 ├── src/pyacy/
-│   ├── __init__.py          # Package entry, public API exports
-│   ├── client.py            # YaCyClient HTTP client
-│   ├── exceptions.py        # Custom exception hierarchy
-│   ├── models.py            # Data models (SearchResponse, etc.)
-│   ├── utils.py             # Utilities (Base64, hashing, seed parsing)
-│   ├── p2p/
-│   │   ├── seed.py          # Seed data model
-│   │   ├── protocol.py      # P2P protocol layer
-│   │   └── hello.py         # Hello protocol client
+│   ├── __init__.py              # Package entry
+│   ├── client.py                # YaCyClient HTTP client
+│   ├── exceptions.py            # Custom exception hierarchy (7 types)
+│   ├── models.py                # Data models (SearchResponse etc.)
+│   ├── utils.py                 # Utilities (Base64, hashing, encoding)
+│   ├── network.py               # PYaCyNode P2P network manager
+│   ├── search/
+│   │   └── query_parser.py      # SearchQuery advanced syntax parser
 │   ├── dht/
-│   │   └── search.py        # DHT search client
-│   └── network.py           # PYaCyNode network manager
-├── tests/                   # Test suite (340 tests)
-├── examples/                # Usage examples
-├── skills/                  # Agent Skills (AI assistant integration)
+│   │   └── search.py            # DHTSearchClient hash-routed search
+│   ├── rwi/
+│   │   ├── storage.py           # RWIStorage SQLite FTS5 storage
+│   │   └── pull.py              # RWIPuller pull mode
+│   ├── crawler/
+│   │   ├── basic.py             # SimpleCrawler web scraper
+│   │   └── robots.py            # RobotsCache robots.txt compliance
+│   ├── indexer/
+│   │   └── local.py             # LocalIndexer full-text index
+│   ├── api/
+│   │   └── adapter.py           # PYaCyAdapter unified interface
+│   └── p2p/
+│       ├── seed.py              # Seed data model + codec
+│       ├── protocol.py          # P2PProtocol codec layer
+│       ├── hello.py             # HelloClient handshake protocol
+│       └── seeds.py             # Seed management & discovery
+├── tests/                        # Test suite (387 passed)
+├── dev/
+│   ├── reports/                  # Roadmaps, analysis reports
+│   ├── checklists/               # Release checklists
+│   └── tests/                    # Deep integration tests
+├── examples/                     # Usage examples
+├── skills/                       # Agent Skills (5)
+├── docs/                         # Documentation (architecture, API, quickstart)
 ├── pyproject.toml
-└── LICENSE                  # MIT License
+└── LICENSE                       # MIT
 ```
 
-## Development
+---
+
+## 🧪 Development
 
 ```bash
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run tests
+# Run all tests
 pytest tests/ -v
 
-# Run examples
-python examples/basic_usage.py
-python examples/p2p_search.py
+# Run unit tests only
+pytest tests/ -v --ignore=tests/test_live_network.py --ignore=tests/live_network_test.py
+
+# Code formatting
+black src/ tests/
+ruff check src/ tests/
 ```
 
-## Roadmap
+### Running Live P2P Tests
+
+```bash
+# Using default seed peers
+python tests/test_live_network.py
+
+# Using custom seeds (if your network is restricted)
+python tests/test_live_network.py --seeds http://your-reachable-node:8090
+```
+
+---
+
+## 📋 Roadmap
 
 ### ✅ Completed
 
 | Milestone | Version | Description |
-|-----------|---------|-------------|
-| HTTP Client | v0.1.0 | YaCy REST API wrapper: search, status, crawler, push, blacklists |
-| Data Models | v0.1.0 | Type-safe response parsing (SearchResponse, PeerStatus, etc.) |
-| Exception Hierarchy | v0.1.0 | 7 custom exceptions covering connection/timeout/auth/response errors |
-| P2P Seed Model | v0.2.0 | Seed data model, YaCy Base64 codec, seed string parsing |
-| P2P Protocol Layer | v0.2.0 | P2PProtocol encoding/decoding, Hello handshake client |
-| DHT Distributed Search | v0.2.0 | Multi-node parallel search, result deduplication & aggregation |
-| Network Bootstrapping | v0.2.0 | Auto-bootstrap from public seed nodes, peer discovery |
-| Junior Node Support | v0.2.2 | Full P2P functionality without a public IP |
-| Hello Handshake Fix | v0.2.3 | Uncompressed seed format compatibility, 100% handshake success |
-| Zero Dependencies | v0.2.4 | Removed `requests`, pure `urllib` standard library implementation |
+|:---|:---|------|
+| HTTP Client | v0.1.0 | Search, status, crawler, push, blacklist |
+| Data Models + Exceptions | v0.1.0 | SearchResponse, PeerStatus etc. + 7 exception types |
+| P2P Seed Model & Protocol | v0.2.0 | Seed codec, P2PProtocol, Hello handshake |
+| DHT Distributed Search | v0.2.0 | Multi-peer parallel search, dedup & aggregation |
+| Network Bootstrapping | v0.2.0 | Auto-bootstrap, peer discovery |
+| Zero Dependencies | v0.2.4 | Removed requests, pure urllib |
+| DHT Hash Routing | v0.3.0 | XOR distance routing, iterative expansion, 31 hardcoded seeds |
+| Response Parsing Fixes | v0.3.1 | resourceN fields, SimpleCoding, backward compatibility |
+| Chinese Compatibility | v0.3.2 | Chinese comma, case-insensitive fields, fallback, search cache |
+| **RWI Storage** | v0.4.0 | SQLite FTS5 storage engine, TTL expiry |
+| **RWI Pull** | v0.4.0 | Proactive RWI pulling (no public IP needed) |
+| **Crawler + Local Index** | v0.4.1 | SimpleCrawler + LocalIndexer (SQLite FTS5) |
+| **Advanced Search Syntax** | v0.4.1 | site:/filetype:/intitle:/inhtml: operators |
+| **robots.txt Compliance** | v0.4.1 | RobotsCache, per-domain rate limiting |
+| **API Adapter** | v0.4.1 | PYaCyAdapter unified search interface |
+| **Agent Skills** | v0.4.1 | 5 skills (search/bootstrap/crawler/status/rwi) |
 
-### 🚧 In Progress
-
-| Milestone | Description |
-|-----------|-------------|
-| Documentation | API docs, architecture guide, contribution guidelines |
-
-### 📋 Planned
+### 🚧 In Progress / Planned
 
 | Milestone | Description | Complexity |
-|-----------|-------------|:----------:|
-| RWI Index Receiving | Receive and store RWI references distributed by other peers | ★★★ |
-| kelondro-Compatible Storage | Index storage format compatible with YaCy Java edition | ★★★★ |
-| RWI Distribution Engine | Distribute local RWI references to other peers (requires public IP) | ★★★★ |
-| Built-in Crawler | Standalone web crawler for building local Solr index | ★★★★ |
-| Full P2P Node | Senior/Principal mode with incoming connection support | ★★★★★ |
+|:---|------|:---:|
+| Senior Node Mode | Port listening, incoming connections, DHT routing table, RWI distribution | ★★★★★ |
+| GUI | Flet + pyecharts cross-platform GUI | ★★★★ |
+| kelondro-Compatible Storage | Index format compatible with YaCy Java edition | ★★★★ |
 | Web UI | Simple web management interface | ★★★ |
 
-## License
+See [dev/reports/ROADMAP.md](dev/reports/ROADMAP.md) for details.
+
+---
+
+## 🤝 Contributing
+
+### Dev Environment Setup
+
+```bash
+git clone https://github.com/RuikangSun/PYaCy.git
+cd PYaCy
+pip install -e ".[dev]"
+pytest tests/ -v  # ensure tests pass
+```
+
+### Code Style
+
+- **Formatting**: [Black](https://github.com/psf/black) (line-length=120)
+- **Linting**: [Ruff](https://github.com/astral-sh/ruff)
+- **Type Checking**: [mypy](https://github.com/python/mypy)
+- All public APIs require docstrings (Google style)
+- New features must include unit tests
+
+### Commit Guidelines
+
+1. Update your progress in `dev/reports/ROADMAP.md`
+2. Ensure `pytest tests/` all pass
+3. Update `docs/` for new modules
+4. Follow `__init__.py::__version__` for versioning
+
+### Documentation Collaboration
+
+See [dev/DEVELOPMENT_SPEC.md](dev/DEVELOPMENT_SPEC.md) for development specifications, including:
+- Naming conventions
+- Module responsibility boundaries
+- New capability protocol
+- Version changelog format
+
+---
+
+## 📄 License
 
 MIT License — see [LICENSE](LICENSE).

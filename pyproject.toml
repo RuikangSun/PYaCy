@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyacy"
-version = "0.4.0"
-description = "YaCy 分布式搜索引擎的 Python 客户端库"
+version = "0.4.1"
+description = "YaCy 分布式搜索引擎的 Python 客户端库 — HTTP 搜索、P2P 网络接入、DHT 分布式搜索、爬虫、本地索引、RWI Pull"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
     {name = "Sun Ruikang & PYaCy Contributors"}
 ]
-keywords = ["yacy", "search-engine", "p2p", "distributed", "client"]
+keywords = ["yacy", "search-engine", "p2p", "distributed", "client", "crawler", "indexer", "dht"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
