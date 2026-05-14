@@ -1,6 +1,7 @@
 # PYaCy
 
 [English](README_EN.md) | 中文 | [我是机器人](README_AGENT.md)
+
 **PYaCy** 是 [YaCy](https://yacy.net/) 分布式搜索引擎的 Python 客户端库。它不仅封装了 YaCy REST API，还能直接参与 P2P 分布式网络 — 搜索、爬取、索引、RWI 拉取，零第三方运行时依赖。
 
 > README文档更新时间：2026-05-14
