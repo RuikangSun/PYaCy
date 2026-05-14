@@ -1,33 +1,30 @@
 # PYaCy
 
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://python.org)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-green)](https://github.com/RuikangSun/PYaCy)
-[![Tests](https://img.shields.io/badge/tests-387%20passed-brightgreen)]()
+English | [中文](README.md) | [I, Robot](README_AGENT.md)
 
-English | [中文](README.md)
+> README last updated: 2026-05-14
 
 **PYaCy** is a Python client library for the [YaCy](https://yacy.net/) distributed search engine. It not only wraps the YaCy REST API but also directly participates in the P2P distributed network — search, crawl, index, pull RWI — with **zero third-party runtime dependencies**.
 
 ---
 
-## ✨ Features
+## Features
 
 | Category | Feature | Description |
 |:---|------|------|
-| 🔍 **Search** | HTTP + DHT distributed search | Local/global/advanced syntax (`site:` `filetype:` `intitle:` etc.) |
-| 🌐 **P2P Network** | Bootstrap + peer discovery | 31 hardcoded seeds, auto-discovers ~160 peers |
-| 📡 **DHT Routing** | Word hash XOR distance routing | Iterative search expansion, precise responsible peer targeting |
-| 🕷️ **Crawler** | Built-in web crawler | Pure stdlib, depth/domain limits, robots.txt compliance, per-domain rate limiting |
-| 📇 **Local Index** | SQLite FTS5 full-text indexing | Crawl then index, Chinese CJK tokenization support |
-| 📥 **RWI Pull** | Proactive RWI data pulling | No public IP needed, fetch reverse word indexes from Senior peers |
-| 🔌 **API Adapter** | Unified search interface | Local RWI + remote DHT parallel query, seamless fallback |
-| 📦 **Zero Deps** | Pure Python standard library | `urllib` + `sqlite3` + `html.parser`, pip install and go |
-| 🤖 **Agent Skills** | AI agent integration | 5 Agent Skills, ready for Claude Code / Cursor |
+| **Search** | HTTP + DHT distributed search | Local/global/advanced syntax (`site:` `filetype:` `intitle:` etc.) |
+| **P2P Network** | Bootstrap + peer discovery | 31 hardcoded seeds, auto-discovers ~160 peers |
+| **DHT Routing** | Word hash XOR distance routing | Iterative search expansion, precise responsible peer targeting |
+| **Crawler** | Built-in web crawler | Pure stdlib, depth/domain limits, robots.txt compliance, per-domain rate limiting |
+| **Local Index** | SQLite FTS5 full-text indexing | Crawl then index, Chinese CJK tokenization support |
+| **RWI Pull** | Proactive RWI data pulling | No public IP needed, fetch reverse word indexes from Senior peers |
+| **API Adapter** | Unified search interface | Local RWI + remote DHT parallel query, seamless fallback |
+| **Zero Deps** | Pure Python standard library | `urllib` + `sqlite3` + `html.parser`, pip install and go |
+| **Agent Skills** | AI agent integration | 5 Agent Skills, ready for Claude Code / Cursor |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -35,7 +32,7 @@ English | [中文](README.md)
 pip install -e .
 ```
 
-PYaCy has **zero runtime dependencies**, requiring only Python ≥ 3.9.
+PYaCy has **zero runtime dependencies**, requiring only Python >= 3.9.
 
 ### P2P Node — Join the YaCy network directly
 
@@ -119,7 +116,7 @@ print(f"Known peers: {status['peer_count']}")
 
 ---
 
-## 📖 API Reference
+## API Reference
 
 ### Top-Level Entry Points
 
@@ -133,9 +130,9 @@ print(f"Known peers: {status['peer_count']}")
 
 | Type | Description | Public IP |
 |:---|------|:---:|
-| **Junior** | Passive node, cannot receive incoming connections (**default**) | ❌ |
-| **Senior** | Active node, can receive incoming connections | ✅ |
-| **Principal** | Core node, provides network infrastructure | ✅ |
+| **Junior** | Passive node, cannot receive incoming connections (**default**) | Not required |
+| **Senior** | Active node, can receive incoming connections | Required |
+| **Principal** | Core node, provides network infrastructure | Required |
 
 ### Module Index
 
@@ -160,51 +157,7 @@ print(f"Known peers: {status['peer_count']}")
 
 ---
 
-## 🗂️ Project Structure
-
-```
-PYaCy/
-├── src/pyacy/
-│   ├── __init__.py              # Package entry
-│   ├── client.py                # YaCyClient HTTP client
-│   ├── exceptions.py            # Custom exception hierarchy (7 types)
-│   ├── models.py                # Data models (SearchResponse etc.)
-│   ├── utils.py                 # Utilities (Base64, hashing, encoding)
-│   ├── network.py               # PYaCyNode P2P network manager
-│   ├── search/
-│   │   └── query_parser.py      # SearchQuery advanced syntax parser
-│   ├── dht/
-│   │   └── search.py            # DHTSearchClient hash-routed search
-│   ├── rwi/
-│   │   ├── storage.py           # RWIStorage SQLite FTS5 storage
-│   │   └── pull.py              # RWIPuller pull mode
-│   ├── crawler/
-│   │   ├── basic.py             # SimpleCrawler web scraper
-│   │   └── robots.py            # RobotsCache robots.txt compliance
-│   ├── indexer/
-│   │   └── local.py             # LocalIndexer full-text index
-│   ├── api/
-│   │   └── adapter.py           # PYaCyAdapter unified interface
-│   └── p2p/
-│       ├── seed.py              # Seed data model + codec
-│       ├── protocol.py          # P2PProtocol codec layer
-│       ├── hello.py             # HelloClient handshake protocol
-│       └── seeds.py             # Seed management & discovery
-├── tests/                        # Test suite (387 passed)
-├── dev/
-│   ├── reports/                  # Roadmaps, analysis reports
-│   ├── checklists/               # Release checklists
-│   └── tests/                    # Deep integration tests
-├── examples/                     # Usage examples
-├── skills/                       # Agent Skills (5)
-├── docs/                         # Documentation (architecture, API, quickstart)
-├── pyproject.toml
-└── LICENSE                       # MIT
-```
-
----
-
-## 🧪 Development
+## Development
 
 ```bash
 # Install dev dependencies
@@ -229,13 +182,16 @@ python tests/test_live_network.py
 
 # Using custom seeds (if your network is restricted)
 python tests/test_live_network.py --seeds http://your-reachable-node:8090
+
+# Conservative parameters (long timeout, long delay)
+python tests/test_live_network.py --timeout 45 --delay 2.0
 ```
 
 ---
 
-## 📋 Roadmap
+## Roadmap
 
-### ✅ Completed
+### Completed
 
 | Milestone | Version | Description |
 |:---|:---|------|
@@ -248,15 +204,15 @@ python tests/test_live_network.py --seeds http://your-reachable-node:8090
 | DHT Hash Routing | v0.3.0 | XOR distance routing, iterative expansion, 31 hardcoded seeds |
 | Response Parsing Fixes | v0.3.1 | resourceN fields, SimpleCoding, backward compatibility |
 | Chinese Compatibility | v0.3.2 | Chinese comma, case-insensitive fields, fallback, search cache |
-| **RWI Storage** | v0.4.0 | SQLite FTS5 storage engine, TTL expiry |
-| **RWI Pull** | v0.4.0 | Proactive RWI pulling (no public IP needed) |
-| **Crawler + Local Index** | v0.4.1 | SimpleCrawler + LocalIndexer (SQLite FTS5) |
-| **Advanced Search Syntax** | v0.4.1 | site:/filetype:/intitle:/inhtml: operators |
-| **robots.txt Compliance** | v0.4.1 | RobotsCache, per-domain rate limiting |
-| **API Adapter** | v0.4.1 | PYaCyAdapter unified search interface |
-| **Agent Skills** | v0.4.1 | 5 skills (search/bootstrap/crawler/status/rwi) |
+| RWI Storage | v0.4.0 | SQLite FTS5 storage engine, TTL expiry |
+| RWI Pull | v0.4.0 | Proactive RWI pulling (no public IP needed) |
+| Crawler + Local Index | v0.4.1 | SimpleCrawler + LocalIndexer (SQLite FTS5) |
+| Advanced Search Syntax | v0.4.1 | site:/filetype:/intitle:/inhtml: operators |
+| robots.txt Compliance | v0.4.1 | RobotsCache, per-domain rate limiting |
+| API Adapter | v0.4.1 | PYaCyAdapter unified search interface |
+| Agent Skills | v0.4.1 | 5 skills (search/bootstrap/crawler/status/rwi) |
 
-### 🚧 In Progress / Planned
+### In Progress / Planned
 
 | Milestone | Description | Complexity |
 |:---|------|:---:|
@@ -265,11 +221,9 @@ python tests/test_live_network.py --seeds http://your-reachable-node:8090
 | kelondro-Compatible Storage | Index format compatible with YaCy Java edition | ★★★★ |
 | Web UI | Simple web management interface | ★★★ |
 
-See [dev/reports/ROADMAP.md](dev/reports/ROADMAP.md) for details.
-
 ---
 
-## 🤝 Contributing
+## Contributing
 
 ### Dev Environment Setup
 
@@ -305,6 +259,6 @@ See [dev/DEVELOPMENT_SPEC.md](dev/DEVELOPMENT_SPEC.md) for development specifica
 
 ---
 
-## 📄 License
+## License
 
 MIT License — see [LICENSE](LICENSE).

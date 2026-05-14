@@ -1,33 +1,29 @@
 # PYaCy
 
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://python.org)
-[![零依赖](https://img.shields.io/badge/dependencies-zero-green)](https://github.com/RuikangSun/PYaCy)
-[![测试](https://img.shields.io/badge/tests-387%20passed-brightgreen)]()
+[English](README_EN.md) | 中文 | [我是机器人](README_AGENT.md)
+**PYaCy** 是 [YaCy](https://yacy.net/) 分布式搜索引擎的 Python 客户端库。它不仅封装了 YaCy REST API，还能直接参与 P2P 分布式网络 — 搜索、爬取、索引、RWI 拉取，零第三方运行时依赖。
 
-[English](README_EN.md) | 中文
-
-**PYaCy** 是 [YaCy](https://yacy.net/) 分布式搜索引擎的 Python 客户端库。它不仅封装了 YaCy REST API，还能直接参与 P2P 分布式网络 — 搜索、爬取、索引、RWI 拉取，**零第三方运行时依赖**。
+> README文档更新时间：2026-05-14
 
 ---
 
-## ✨ 特性
+## 特性
 
 | 类别 | 功能 | 说明 |
 |:---|------|------|
-| 🔍 **搜索** | HTTP 搜索 + DHT 分布式搜索 | 本地/全局/高级搜索语法（`site:` `filetype:` `intitle:` 等） |
-| 🌐 **P2P 网络** | Bootstrap 引导 + 节点发现 | 31 个硬编码种子，自动发现 ~160 个节点 |
-| 📡 **DHT 路由** | 词哈希 XOR 距离路由 | 迭代搜索扩展，精准定位负责节点 |
-| 🕷️ **爬虫** | 内置网页爬虫 | 纯标准库，支持深度/域限制、robots.txt 遵从、按域名限速 |
-| 📇 **本地索引** | SQLite FTS5 全文索引 | 爬取即索引，支持中文 CJK 分词 |
-| 📥 **RWI Pull** | 主动拉取 RWI 数据 | 无需公网 IP，从 Senior 节点获取反向索引 |
-| 🔌 **API 适配器** | 统一搜索接口 | 本地 RWI + 远程 DHT 并行查询，无感切换 |
-| 📦 **零依赖** | 纯 Python 标准库 | `urllib` + `sqlite3` + `html.parser`，pip install 即用 |
-| 🤖 **Agent Skills** | AI 智能体集成 | 5 个 Agent Skill，Claude Code / Cursor 即装即用 |
+| **搜索** | HTTP 搜索 + DHT 分布式搜索 | 本地/全局/高级搜索语法（`site:` `filetype:` `intitle:` 等） |
+| **P2P 网络** | Bootstrap 引导 + 节点发现 | 31 个硬编码种子，自动发现 ~160 个节点 |
+| **DHT 路由** | 词哈希 XOR 距离路由 | 迭代搜索扩展，精准定位负责节点 |
+| **爬虫** | 内置网页爬虫 | 纯标准库，支持深度/域限制、robots.txt 遵从、按域名限速 |
+| **本地索引** | SQLite FTS5 全文索引 | 爬取即索引，支持中文 CJK 分词 |
+| **RWI Pull** | 主动拉取 RWI 数据 | 无需公网 IP，从 Senior 节点获取反向索引 |
+| **API 适配器** | 统一搜索接口 | 本地 RWI + 远程 DHT 并行查询，无感切换 |
+| **零依赖** | 纯 Python 标准库 | `urllib` + `sqlite3` + `html.parser`，pip install 即用 |
+| **Agent Skills** | AI 智能体集成 | 5 个 Agent Skill，Claude Code / Cursor 即装即用 |
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
 ### 安装
 
@@ -119,7 +115,7 @@ print(f"已知节点: {status['peer_count']}")
 
 ---
 
-## 📖 API 参考
+## API 参考
 
 ### 顶层入口
 
@@ -133,9 +129,9 @@ print(f"已知节点: {status['peer_count']}")
 
 | 类型 | 说明 | 公网 IP |
 |:---|------|:---:|
-| **Junior** | 被动节点，无法接收传入连接（**默认**） | ❌ |
-| **Senior** | 主动节点，可接收传入连接 | ✅ |
-| **Principal** | 核心节点，提供网络基础设施 | ✅ |
+| **Junior** | 被动节点，无法接收传入连接（**默认**） | 无需 |
+| **Senior** | 主动节点，可接收传入连接 | 需要 |
+| **Principal** | 核心节点，提供网络基础设施 | 需要 |
 
 ### 模块索引
 
@@ -160,47 +156,7 @@ print(f"已知节点: {status['peer_count']}")
 
 ---
 
-## 🗂️ 项目结构
-
-```
-PYaCy/
-├── src/pyacy/
-│   ├── __init__.py              # 包入口
-│   ├── client.py                # YaCyClient HTTP 客户端
-│   ├── exceptions.py            # 自定义异常体系（7 种）
-│   ├── models.py                # 数据模型（SearchResponse 等）
-│   ├── utils.py                 # 工具函数（Base64、哈希、编码）
-│   ├── network.py               # PYaCyNode P2P 网络管理
-│   ├── search/
-│   │   └── query_parser.py      # SearchQuery 高级搜索语法解析
-│   ├── dht/
-│   │   └── search.py            # DHTSearchClient 哈希路由搜索
-│   ├── rwi/
-│   │   ├── storage.py           # RWIStorage SQLite FTS5 存储
-│   │   └── pull.py              # RWIPuller Pull 模式拉取
-│   ├── crawler/
-│   │   ├── basic.py             # SimpleCrawler 网页抓取
-│   │   └── robots.py            # RobotsCache robots.txt 遵从
-│   ├── indexer/
-│   │   └── local.py             # LocalIndexer 本地全文索引
-│   ├── api/
-│   │   └── adapter.py           # PYaCyAdapter 统一接口
-│   └── p2p/
-│       ├── seed.py              # Seed 数据模型 + 编解码
-│       ├── protocol.py          # P2PProtocol 协议层
-│       ├── hello.py             # HelloClient 握手协议
-│       └── seeds.py             # 种子管理与三层发现
-├── tests/                        # 测试套件
-├── examples/                     # 使用示例
-├── skills/                       # Agent Skills
-├── docs/                         # 文档（架构、API、快速开始）
-├── pyproject.toml
-└── LICENSE                       # MIT
-```
-
----
-
-## 🧪 开发
+## 开发
 
 ```bash
 # 安装开发依赖
@@ -225,13 +181,16 @@ python tests/test_live_network.py
 
 # 使用自定义种子（如果你的网络有限制）
 python tests/test_live_network.py --seeds http://your-reachable-node:8090
+
+# 保守参数（长超时、长间隔）
+python tests/test_live_network.py --timeout 45 --delay 2.0
 ```
 
 ---
 
-## 📋 开发路线图
+## 开发路线图
 
-### ✅ 已完成
+### 已完成
 
 | 里程碑 | 版本 | 说明 |
 |:---|:---|------|
@@ -244,15 +203,15 @@ python tests/test_live_network.py --seeds http://your-reachable-node:8090
 | DHT 哈希路由 | v0.3.0 | XOR 距离路由、迭代搜索扩展、31 个硬编码种子 |
 | 响应解析修复 | v0.3.1 | resourceN 字段、SimpleCoding、新旧格式兼容 |
 | 中文兼容性修复 | v0.3.2 | 中文逗号、字段名大小写、缺失字段回退、搜索缓存 |
-| **RWI 存储** | v0.4.0 | SQLite FTS5 存储引擎、TTL 过期 |
-| **RWI Pull** | v0.4.0 | 主动拉取 RWI（无需公网 IP） |
-| **爬虫 + 本地索引** | v0.4.1 | SimpleCrawler + LocalIndexer（SQLite FTS5） |
-| **高级搜索语法** | v0.4.1 | site:/filetype:/intitle:/inhtml: 等操作符 |
-| **robots.txt 遵从** | v0.4.1 | RobotsCache，按域名限速调度 |
-| **API 适配器** | v0.4.1 | PYaCyAdapter 统一搜索接口 |
-| **Agent Skills** | v0.4.1 | 5 个技能（search/bootstrap/crawler/status/rwi） |
+| RWI 存储 | v0.4.0 | SQLite FTS5 存储引擎、TTL 过期 |
+| RWI Pull | v0.4.0 | 主动拉取 RWI（无需公网 IP） |
+| 爬虫 + 本地索引 | v0.4.1 | SimpleCrawler + LocalIndexer（SQLite FTS5） |
+| 高级搜索语法 | v0.4.1 | site:/filetype:/intitle:/inhtml: 等操作符 |
+| robots.txt 遵从 | v0.4.1 | RobotsCache，按域名限速调度 |
+| API 适配器 | v0.4.1 | PYaCyAdapter 统一搜索接口 |
+| Agent Skills | v0.4.1 | 5 个技能（search/bootstrap/crawler/status/rwi） |
 
-### 🚧 进行中 / 计划中
+### 进行中 / 计划中
 
 | 里程碑 | 说明 | 复杂度 |
 |:---|------|:---:|
@@ -260,6 +219,8 @@ python tests/test_live_network.py --seeds http://your-reachable-node:8090
 | GUI 界面 | Flet + pyecharts 跨平台图形界面 | ★★★★ |
 | kelondro 兼容存储 | 兼容 YaCy Java 版的索引存储格式 | ★★★★ |
 | Web UI | 简易 Web 管理界面 | ★★★ |
+
+---
 
 ## 许可证
 
